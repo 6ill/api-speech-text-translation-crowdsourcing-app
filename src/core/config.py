@@ -4,6 +4,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str
     # Database
     DATABASE_URL: str
+    SYNC_DATABASE_URL: str
     # Model Loading
     ASR_MODEL_NAME: str
     MLFLOW_TRACKING_URI: str
@@ -14,6 +15,8 @@ class Settings(BaseSettings):
     STORAGE_BUCKET_NAME: str
     STORAGE_ACCESS_KEY: str
     STORAGE_SECRET_KEY: str
+    # Celery
+    CELERY_BROKER_URL: str
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

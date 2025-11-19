@@ -3,6 +3,14 @@ FROM python:3.10-slim
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# For transcription
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ffmpeg \ 
+    && \
+    # Clean up the cache to keep the image small
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY requirements.txt .
