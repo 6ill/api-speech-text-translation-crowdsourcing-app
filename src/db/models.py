@@ -223,19 +223,3 @@ class TranslationCorrection(SQLModel, table=True):
     segment: Segment = Relationship(back_populates="translation_corrections")
 
 AllModels = [User, File, Segment, TranscriptionCorrection, TranslationCorrection]
-class PipelineSchedule(SQLModel, table=True):
-    __tablename__ = "pipeline_schedules"
-
-    id: UUID = Field(sa_column=Column(pg.UUID, primary_key=True, default=uuid4))
-    
-    is_active: bool = Field(default=True)
-    cron_expression: str = Field(max_length=100) 
-    
-    last_run_at: Optional[datetime] = Field(sa_column=Column(pg.TIMESTAMP(timezone=True), nullable=True))
-    last_status: Optional[str] = Field(nullable=True) # 'success', 'failed', 'running'
-    
-    created_at: datetime = Field(
-        sa_column=Column(
-            pg.TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc)
-        )
-    )

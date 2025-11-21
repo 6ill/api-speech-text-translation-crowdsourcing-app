@@ -37,15 +37,6 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_pipeline_configs_task_type'), 'pipeline_configs', ['task_type'], unique=True)
-    op.create_table('pipeline_schedules',
-    sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('is_active', sa.Boolean(), nullable=False),
-    sa.Column('cron_expression', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
-    sa.Column('last_run_at', postgresql.TIMESTAMP(timezone=True), nullable=True),
-    sa.Column('last_status', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('created_at', postgresql.TIMESTAMP(timezone=True), nullable=True),
-    sa.PrimaryKeyConstraint('id')
-    )
     op.create_table('pipeline_run_logs',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('config_id', sa.Uuid(), nullable=False),
