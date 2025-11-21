@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     MLFLOW_S3_ARTIFACT_ROOT: str
     # Object Storage
     STORAGE_ENDPOINT_URL: str
-    STORAGE_BUCKET_NAME: str
+    STORAGE_BUCKET_AUDIO: str
+    STORAGE_BUCKET_TEST: str
     STORAGE_ACCESS_KEY: str
     STORAGE_SECRET_KEY: str
     # Celery

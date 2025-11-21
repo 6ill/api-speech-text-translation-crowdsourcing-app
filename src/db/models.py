@@ -25,6 +25,79 @@ class CorrectionStatus(StrEnum):
     REJECTED = "rejected"
     APPROVED = "approved"
 
+class PipelineTaskType(StrEnum):
+    ASR = "asr"
+    MT = "mt"
+
+class PipelineRunStatus(StrEnum):
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped" 
+
+class PipelineConfig(SQLModel, table=True):
+    __tablename__ = "pipeline_configs"
+
+    id: UUID = Field(sa_column=Column(pg.UUID, primary_key=True, default=uuid4))
+    
+    # Only one unique config per type
+    task_type: PipelineTaskType = Field(
+        sa_column=Column(pg.ENUM(PipelineTaskType), unique=True, index=True)
+    )
+    
+    is_active: bool = Field(default=True)
+    
+    # example: "0 3 * * 0" every week at 3AM)
+    cron_schedule: str = Field(max_length=50, default="0 3 * * 0")
+    
+    min_samples_required: int = Field(default=100)
+    
+    learning_rate: float = Field(default=2e-5)
+    num_epochs: int = Field(default=3)
+    batch_size: int = Field(default=4)
+    
+    evaluation_dataset_storage_key: str = Field(max_length=255)
+    
+    created_at: datetime = Field(
+        sa_column=Column(
+            pg.TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc)
+        )
+    )
+    updated_at: datetime = Field(
+        sa_column=Column(
+            pg.TIMESTAMP(timezone=True), 
+            default=lambda: datetime.now(timezone.utc),
+            onupdate=lambda: datetime.now(timezone.utc)
+        )
+    )
+
+class PipelineRunLog(SQLModel, table=True):
+    __tablename__ = "pipeline_run_logs"
+
+    id: UUID = Field(sa_column=Column(pg.UUID, primary_key=True, default=uuid4))
+    
+    config_id: UUID = Field(foreign_key="pipeline_configs.id")
+    
+    mlflow_run_id: Optional[str] = Field(default=None, max_length=100)
+    
+    status: PipelineRunStatus = Field(sa_column=Column(pg.ENUM(PipelineRunStatus)))
+    
+    data_samples_used: int = Field(default=0)
+    
+    # example: {"wer": 0.25, "bleu": 24.5}
+    metrics_baseline: Optional[dict] = Field(sa_column=Column(pg.JSON, nullable=True))
+    metrics_new_model: Optional[dict] = Field(sa_column=Column(pg.JSON, nullable=True))
+    
+    message: Optional[str] = Field(sa_column=Column(pg.TEXT, nullable=True))
+    
+    start_time: datetime = Field(
+        sa_column=Column(
+            pg.TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc)
+        )
+    )
+    end_time: Optional[datetime] = Field(
+        sa_column=Column(pg.TIMESTAMP(timezone=True), nullable=True)
+    )
 
 class User(SQLModel, table=True):
     __tablename__ = "users"
@@ -150,3 +223,19 @@ class TranslationCorrection(SQLModel, table=True):
     segment: Segment = Relationship(back_populates="translation_corrections")
 
 AllModels = [User, File, Segment, TranscriptionCorrection, TranslationCorrection]
+class PipelineSchedule(SQLModel, table=True):
+    __tablename__ = "pipeline_schedules"
+
+    id: UUID = Field(sa_column=Column(pg.UUID, primary_key=True, default=uuid4))
+    
+    is_active: bool = Field(default=True)
+    cron_expression: str = Field(max_length=100) 
+    
+    last_run_at: Optional[datetime] = Field(sa_column=Column(pg.TIMESTAMP(timezone=True), nullable=True))
+    last_status: Optional[str] = Field(nullable=True) # 'success', 'failed', 'running'
+    
+    created_at: datetime = Field(
+        sa_column=Column(
+            pg.TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc)
+        )
+    )

@@ -32,7 +32,12 @@ class StorageClient:
         return StorageClient._client
 
     @staticmethod
-    def upload_file_obj(file_obj: IO[bytes], object_name: str, content_type: str) -> bool:
+    def upload_file_obj(
+        file_obj: IO[bytes],
+        object_name: str,
+        content_type: str,
+        bucket_name: str = Config.STORAGE_BUCKET_AUDIO
+    ) -> bool:
         """
         Uploads a file-like object to the S3 bucket.
         """
@@ -40,28 +45,32 @@ class StorageClient:
         try:
             client.upload_fileobj(
                 file_obj,
-                Config.STORAGE_BUCKET_NAME,
+                bucket_name,
                 object_name,
                 ExtraArgs={"ContentType": content_type}
             )
-            logger.info(f"Successfully uploaded file to {Config.STORAGE_BUCKET_NAME}/{object_name}")
+            logger.info(
+                f"Successfully uploaded file to {bucket_name}/{object_name}"
+            )
             return True
         except ClientError as e:
             logger.error(f"Failed to upload file '{object_name}': {e}", exc_info=True)
             return False
         except Exception as e:
-            logger.error(f"An unexpected error occurred during upload: {e}", exc_info=True)
+            logger.error(
+                f"An unexpected error occurred during upload: {e}", exc_info=True
+            )
             return False
 
     @staticmethod
-    def download_file_obj(object_name: str) -> bytes | None:
+    def download_file_obj(object_name: str, bucket_name: str = Config.STORAGE_BUCKET_AUDIO) -> bytes | None:
         """
         Downloads a file from S3 and returns its content as bytes.
         """
         client = StorageClient.get_client()
         try:
             response = client.get_object(
-                Bucket=Config.STORAGE_BUCKET_NAME, 
+                Bucket=bucket_name, 
                 Key=object_name
             )
             return response["Body"].read()

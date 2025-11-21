@@ -37,7 +37,7 @@ class InferenceService:
             user_id=user_id,
             status=FileStatus.UPLOADING,
             file_name=file.filename,
-            storage_bucket=Config.STORAGE_BUCKET_NAME,
+            storage_bucket=Config.STORAGE_BUCKET_AUDIO,
             storage_key="",
             mime_type=file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream",
             file_size=file.size or 0,
