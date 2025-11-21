@@ -2,10 +2,14 @@ import sys
 import os
 from pathlib import Path
 
-# ADD PROJECT ROOT TO SYSTEM PATH ---
+# --- ADD PROJECT ROOT TO SYSTEM PATH ---
+# Get the directory of this script (scripts/)
 current_dir = Path(__file__).resolve().parent
+# Get the project root (one level up)
 project_root = current_dir.parent
+# Add project root to sys.path so Python can find 'src'
 sys.path.append(str(project_root))
+# ---------------------------------
 
 import shutil
 import pandas as pd
@@ -22,7 +26,7 @@ from src.core.config import Config
 # Konfigurasi
 DATASET_ID = "SpeechColab/GigaSpeech2"
 LANGUAGE_SUBSET = "id"
-TARGET_SAMPLES = 100 # Jumlah sampel untuk test set statis
+TARGET_SAMPLES = 10 # Jumlah sampel untuk test set statis
 OUTPUT_DIR = "static_test_dataset_asr"
 ZIP_FILENAME = "static_test_dataset_asr.zip"
 S3_KEY = "datasets/static_test_dataset_asr.zip"
@@ -43,57 +47,46 @@ def prepare_static_dataset():
     
     print(f"3. Streaming GigaSpeech2 ({LANGUAGE_SUBSET}) TEST split...")
     # Streaming mode agar tidak perlu download 300GB data
-    ds_full = load_dataset(
+    ds_stream = load_dataset(
         DATASET_ID, 
         "default", 
         data_dir=f"data/{LANGUAGE_SUBSET}", 
         split="train", 
-        streaming=False, 
+        streaming=True, 
     )
 
-    print("4. Mapping text and filtering samples...")
-    # This step joins the audio file path with the text from the TSV
-    def map_audio_path_to_text(sample):
-        # Extract segment_id from the audio file path
-        filename = os.path.basename(sample["wav"]["path"])
+    collected_samples = []
+    print(f"4. Collecting {TARGET_SAMPLES} valid samples...")
+    
+    for sample in tqdm(ds_stream):
+        if len(collected_samples) >= TARGET_SAMPLES:
+            break
+            
+        # Parse ID dari path file audio
+        # Path contoh di stream: 'data/id/test/wav/YOU100...wav'
+        # ID di TSV biasanya nama file tanpa ekstensi
+        audio_path = sample["wav"]["path"]
+        filename = os.path.basename(audio_path)
         segment_id = os.path.splitext(filename)[0]
         
+        # Cari teks
         text = transcript_map.get(segment_id)
         
         if text:
-            # Add the text and ID for downstream processing
-            sample["sentence"] = text
-            sample["segment_id"] = segment_id
-            return sample
-        return None # Return None if text is missing
-        
-    ds_processed = ds_full.map(map_audio_path_to_text, num_proc=os.cpu_count())
-    
-    # Filter out samples that couldn't be matched
-    ds_processed = ds_processed.filter(lambda x: x.get("sentence") is not None)
+            # Validasi Audio (Pastikan bisa dibaca)
+            audio_array = sample["wav"]["array"]
+            sampling_rate = sample["wav"]["sampling_rate"]
+            
+            # Masukkan ke list
+            collected_samples.append({
+                "audio": {
+                    "array": audio_array,
+                    "sampling_rate": sampling_rate
+                },
+                "sentence": text,
+                "segment_id": segment_id
+            })
 
-    # 5. Take the target number of samples (10)
-    ds_final = ds_processed.select(range(min(TARGET_SAMPLES, len(ds_processed))))
-    
-    # --- CRITICAL STEP: Trigger audio array loading one last time ---
-    collected_samples = []
-    print(f"6. Accessing audio arrays and preparing final list ({len(ds_final)} samples)...")
-    
-    for sample in tqdm(ds_final):
-        # Accessing the "array" key forces the audio decoding, 
-        # but since we loaded the data non-streaming, this should be stable.
-        audio_array = sample["wav"]["array"]
-        sampling_rate = sample["wav"]["sampling_rate"]
-
-        collected_samples.append({
-            "audio": {
-                "array": audio_array,
-                "sampling_rate": sampling_rate
-            },
-            "sentence": sample["sentence"],
-            "segment_id": sample["segment_id"]
-        })
-        
     print(f"Collected {len(collected_samples)} samples.")
 
     print("5. Creating Hugging Face Dataset...")
@@ -110,14 +103,13 @@ def prepare_static_dataset():
     # Membuat file zip dari folder dataset
     shutil.make_archive(base_name=OUTPUT_DIR, format='zip', root_dir=OUTPUT_DIR)
     
-    print(f"8. Uploading {ZIP_FILENAME} to S3 ({Config.STORAGE_BUCKET_TEST})...")
+    print(f"8. Uploading {ZIP_FILENAME} to S3 ({Config.STORAGE_BUCKET_NAME})...")
     # Baca file zip sebagai binary
     with open(ZIP_FILENAME, "rb") as f:
         success = StorageClient.upload_file_obj(
             f, 
             S3_KEY, 
-            "application/zip",
-            Config.STORAGE_BUCKET_TEST
+            "application/zip"
         )
     
     if success:
