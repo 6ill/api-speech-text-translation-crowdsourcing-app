@@ -1,6 +1,8 @@
-from asgiref.sync import async_to_sync
 from contextlib import contextmanager
+import mlflow
+from pathlib import Path
 from sqlmodel import select
+import torch
 from typing import Any
 from uuid import UUID
 
@@ -14,12 +16,46 @@ from src.db.models import File, Segment, FileStatus
 
 logger = get_logger("InferenceWorker")
 
-logger.info("Worker starting... Loading ASR Model...")
-ASR_PIPELINE: Any = load_model_pipeline(
-    Config.ASR_MODEL_NAME, 
-    "automatic-speech-recognition", 
-    "production"
-)
+# logger.info("Worker starting... Loading ASR Model...")
+# ASR_PIPELINE: Any = load_model_pipeline(
+#     Config.ASR_MODEL_NAME, 
+#     "automatic-speech-recognition", 
+#     "production"
+# )
+
+# if ASR_PIPELINE is None:
+#     logger.critical("WORKER FAILED TO START: Could not load ASR model.")
+
+# Tentukan path absolut ke folder yang baru kita downlo ad
+# (Mundur 2 level dari src/workers ke root, lalu masuk models/whisper_production)
+LOCAL_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "whisper_production" / "artifacts"
+
+logger.info(f"Worker starting... Loading ASR Model from LOCAL CACHE: {LOCAL_MODEL_PATH}")
+
+ASR_PIPELINE = None
+
+try:
+    if LOCAL_MODEL_PATH.exists() and any(LOCAL_MODEL_PATH.iterdir()):
+        local_uri = LOCAL_MODEL_PATH.as_uri()
+        logger.info(f"Loading from URI: {local_uri}")
+        device_arg = 0 if torch.cuda.is_available() else -1
+        logger.info(f"CUDA Available: {torch.cuda.is_available()}. Using device: {device_arg}")
+        
+        # Tentukan tipe data: float16 jauh lebih cepat di GPU, float32 untuk CPU
+        torch_dtype = "float16" if torch.cuda.is_available() else "float32"
+
+        ASR_PIPELINE = mlflow.transformers.load_model(
+            model_uri=local_uri, 
+            task="automatic-speech-recognition",
+            torch_dtype=torch_dtype,
+            device=device_arg 
+        )
+        logger.info("Model loaded successfully from local disk.")
+    else:
+        logger.critical(f"Local model not found at {LOCAL_MODEL_PATH}. Run scripts/download_model_manual.py first!")
+except Exception as e:
+    logger.critical(f"Failed to load local model: {e}", exc_info=True)
+
 
 if ASR_PIPELINE is None:
     logger.critical("WORKER FAILED TO START: Could not load ASR model.")
