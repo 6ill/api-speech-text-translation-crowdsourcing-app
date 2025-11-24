@@ -3,7 +3,7 @@ from src.workers.pipeline_tasks import run_cl_pipeline
 from src.db.models import PipelineTaskType
 from .schema import PipelineTriggerResponse
 
-router = APIRouter(prefix="/pipeline", tags=["Pipeline"])
+router = APIRouter()
 
 @router.post("/trigger/{task_type}", response_model=PipelineTriggerResponse)
 async def trigger_pipeline_manual(task_type: PipelineTaskType):
