@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from kombu import Queue
 from src.core.config import Config
 
@@ -9,7 +10,7 @@ celery_app = Celery(
     backend=Config.CELERY_BROKER_URL, 
     include=[
         "src.workers.inference_tasks", 
-        # "src.workers.pipeline_tasks"
+        "src.workers.pipeline_tasks"
     ],
 )
 
@@ -25,3 +26,10 @@ celery_app.conf.task_default_routing_key = "inference.default"
 
 # Set timezone
 celery_app.conf.timezone = "UTC"
+
+celery_app.conf.beat_schedule = {
+    "check-pipeline-schedules-every-hour": {
+        "task": "tasks.check_and_trigger_scheduled_pipelines",
+        "schedule": crontab(minute=0), 
+    },
+}

@@ -1,3 +1,5 @@
+from croniter import croniter
+from datetime import datetime, timezone, timedelta
 import mlflow
 import shutil
 import os
@@ -264,3 +266,39 @@ def _mark_data_as_used(session, correction_ids: List[UUID], task_type: PipelineT
         record.used_for_training = True
     
     session.commit()
+
+@celery_app.task(name="tasks.check_and_trigger_scheduled_pipelines", queue="ml_pipeline_queue")
+def check_and_trigger_scheduled_pipelines():
+    """
+    Periodic task (Meta-Scheduler) that runs (e.g., hourly).
+    It checks the DB for active PipelineConfigs and verifies if their
+    CRON schedule matches the current time window.
+    """
+    logger.info("Checking for scheduled pipelines...")
+    
+    now = datetime.now(timezone.utc)
+    # Window of tolerance (e.g., look back 1 hour to see if we missed a trigger)
+    # Since this task runs hourly, we check if a schedule occurred in the last hour.
+    window_start = now - timedelta(hours=1)
+    
+    with db_session_scope() as session:
+        statement = select(PipelineConfig).where(PipelineConfig.is_active == True)
+        configs = session.exec(statement).all()
+        
+        for config in configs:
+            try:
+                # Parse cron string
+                cron = croniter(config.cron_schedule, window_start)
+                next_trigger = cron.get_next(datetime)
+                
+                # If the 'next trigger' calculated from 1 hour ago
+                # falls between '1 hour ago' and 'now', it means it's time to run.
+                if window_start <= next_trigger <= now:
+                    logger.info(f"Schedule match for {config.task_type}. Triggering pipeline.")
+                    
+                    run_cl_pipeline.delay(task_type_str=config.task_type.value)
+                else:
+                    logger.debug(f"No schedule match for {config.task_type}. Next run: {next_trigger}")
+                    
+            except Exception as e:
+                logger.error(f"Error checking schedule for config {config.id}: {e}")
