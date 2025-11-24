@@ -165,3 +165,7 @@ sample.py
 node_modules
 .ruff_cache
 .hypothesis
+
+# Celery
+celerybeat-schedule*
+celerybeat*
