@@ -44,7 +44,7 @@ def get_or_load_asr_pipeline():
     logger.info("Initializing ASR Model (Lazy Load)...")
 
     # Define absolute path to the specific folder
-    LOCAL_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "whisper_production" / "artifacts" / "model"
+    LOCAL_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "whisper_production" 
 
     try:
         if LOCAL_MODEL_PATH.exists() and any(LOCAL_MODEL_PATH.iterdir()):
