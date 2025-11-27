@@ -3,6 +3,7 @@ import mlflow
 from pathlib import Path
 from sqlmodel import select
 import torch
+from transformers import pipeline
 from typing import Any
 from uuid import UUID
 
@@ -26,39 +27,54 @@ logger = get_logger("InferenceWorker")
 # if ASR_PIPELINE is None:
 #     logger.critical("WORKER FAILED TO START: Could not load ASR model.")
 
-# Tentukan path absolut ke folder yang baru kita downlo ad
-# (Mundur 2 level dari src/workers ke root, lalu masuk models/whisper_production)
-LOCAL_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "whisper_production" / "artifacts"
+_GLOBAL_ASR_PIPELINE = None
 
-logger.info(f"Worker starting... Loading ASR Model from LOCAL CACHE: {LOCAL_MODEL_PATH}")
+def get_or_load_asr_pipeline():
+    """
+    Lazy loader for the ASR Pipeline.
+    This ensures the model is NOT loaded when FastAPI imports this file.
+    It is loaded only when the Celery Worker executes the first task.
+    """
+    global _GLOBAL_ASR_PIPELINE
+    
+    # If model is already loaded in this process, return it immediately
+    if _GLOBAL_ASR_PIPELINE is not None:
+        return _GLOBAL_ASR_PIPELINE
 
-ASR_PIPELINE = None
+    logger.info("Initializing ASR Model (Lazy Load)...")
 
-try:
-    if LOCAL_MODEL_PATH.exists() and any(LOCAL_MODEL_PATH.iterdir()):
-        local_uri = LOCAL_MODEL_PATH.as_uri()
-        logger.info(f"Loading from URI: {local_uri}")
-        device_arg = 0 if torch.cuda.is_available() else -1
-        logger.info(f"CUDA Available: {torch.cuda.is_available()}. Using device: {device_arg}")
-        
-        # Tentukan tipe data: float16 jauh lebih cepat di GPU, float32 untuk CPU
-        torch_dtype = "float16" if torch.cuda.is_available() else "float32"
+    # Define absolute path to the specific folder
+    LOCAL_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "whisper_production" / "artifacts" / "model"
 
-        ASR_PIPELINE = mlflow.transformers.load_model(
-            model_uri=local_uri, 
-            task="automatic-speech-recognition",
-            torch_dtype=torch_dtype,
-            device=device_arg 
-        )
-        logger.info("Model loaded successfully from local disk.")
-    else:
-        logger.critical(f"Local model not found at {LOCAL_MODEL_PATH}. Run scripts/download_model_manual.py first!")
-except Exception as e:
-    logger.critical(f"Failed to load local model: {e}", exc_info=True)
-
-
-if ASR_PIPELINE is None:
-    logger.critical("WORKER FAILED TO START: Could not load ASR model.")
+    try:
+        if LOCAL_MODEL_PATH.exists() and any(LOCAL_MODEL_PATH.iterdir()):
+            
+            # 1. Detect Hardware
+            is_gpu = torch.cuda.is_available()
+            device_arg = 0 if is_gpu else -1
+            torch_dtype = torch.float16 if is_gpu else torch.float32
+            
+            logger.info(f"Hardware Check -> CUDA Available: {is_gpu}. Using device index: {device_arg}")
+            
+            # 2. Load Native Transformers Pipeline
+            _GLOBAL_ASR_PIPELINE = pipeline(
+                task="automatic-speech-recognition",
+                model=str(LOCAL_MODEL_PATH),
+                tokenizer=str(LOCAL_MODEL_PATH),
+                device=device_arg,
+                torch_dtype=torch_dtype,
+                chunk_length_s=30 
+            )
+            
+            logger.info("Model loaded successfully into RAM.")
+            return _GLOBAL_ASR_PIPELINE
+        else:
+            logger.critical(f"Local model files not found at {LOCAL_MODEL_PATH}.")
+            return None
+            
+    except Exception as e:
+        logger.critical(f"Failed to load local model: {e}", exc_info=True)
+        return None
 
 
 @contextmanager
@@ -82,7 +98,9 @@ def run_transcription_task(file_id: str, storage_key: str):
     """
     logger.info(f"[Task ID: {file_id}] Celery task started. Processing transcription...")
     
-    if ASR_PIPELINE is None:
+    asr_pipeline = get_or_load_asr_pipeline()
+    
+    if asr_pipeline is None:
         logger.error(f"[Task ID: {file_id}] ASR_PIPELINE is not loaded. Aborting.")
         raise RuntimeError("ASR_PIPELINE is not loaded in worker.")
 
@@ -106,7 +124,7 @@ def run_transcription_task(file_id: str, storage_key: str):
                 raise Exception("Failed to download file from S3.")
 
             logger.info(f"[Task ID: {file_id}] Starting ML inference...")
-            result = ASR_PIPELINE(
+            result = asr_pipeline(
                 audio_bytes, 
                 return_timestamps=True,
                 language="id",
