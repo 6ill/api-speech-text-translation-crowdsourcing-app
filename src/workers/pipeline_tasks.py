@@ -66,6 +66,15 @@ def run_cl_pipeline(task_type_str: str = "asr"):
     # Determine task type enum
     task_type = PipelineTaskType(task_type_str)
     
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+    
+    LOCAL_MODEL_PATH = PROJECT_ROOT / "models" / "whisper_production"
+    
+    # Validation
+    if not (LOCAL_MODEL_PATH / "config.json").exists():
+        logger.critical(f"CRITICAL: Base model not found at {LOCAL_MODEL_PATH}. Cannot perform Continual Learning.")
+        return
+    
     with db_session_scope() as session:
         # 1. Fetch Pipeline Configuration
         statement = select(PipelineConfig).where(PipelineConfig.task_type == task_type)
@@ -152,7 +161,7 @@ def run_cl_pipeline(task_type_str: str = "asr"):
                 # Strategy: We train a FRESH adapter on (New + Replay) data.
                 # This avoids complexity of merging adapters repeatedly.
                 trainer = ASRFineTuner(
-                    model_name_or_path=Config.ASR_MODEL_NAME, # e.g., "openai/whisper-small"
+                    model_name_or_path=str(LOCAL_MODEL_PATH),
                     output_dir=str(run_dir / "training_output")
                 )
                 
