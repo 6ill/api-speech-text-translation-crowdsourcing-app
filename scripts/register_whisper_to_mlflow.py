@@ -15,7 +15,7 @@ os.environ["AWS_ACCESS_KEY_ID"] = Config.STORAGE_ACCESS_KEY
 os.environ["AWS_SECRET_ACCESS_KEY"] = Config.STORAGE_SECRET_KEY
 os.environ["MLFLOW_S3_ENDPOINT_URL"] = Config.STORAGE_ENDPOINT_URL
 
-HUGGINGFACE_MODEL_ID = "RedHatAI/whisper-large-v3-turbo-quantized.w4a16"  # (Contoh: 'whisper-base', 'whisper-small', dll.)
+HUGGINGFACE_MODEL_ID = "openai/whisper-tiny"
 
 MLFLOW_MODEL_NAME = "whisper-asr-base"
 
