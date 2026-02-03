@@ -145,11 +145,13 @@ class File(SQLModel, table=True):
             pg.TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc)
         )
     )
+    speaker_id: Optional[UUID] = Field(foreign_key="people.id", index=True, default=None)
 
     user: User = Relationship(back_populates="files")
     segments: List["Segment"] = Relationship(
         back_populates="file", sa_relationship_kwargs={"lazy": "selectin"}
     )
+    speaker: Optional["People"] = Relationship(back_populates="files")
 
     def __repr__(self) -> str:
         return f"<File {self.file_name}>"
@@ -221,5 +223,17 @@ class TranslationCorrection(SQLModel, table=True):
     used_for_training: bool = Field(default=False)
 
     segment: Segment = Relationship(back_populates="translation_corrections")
+
+class People(SQLModel, table=True):
+    __tablename__ = "people"
+    id: UUID = Field(sa_column=Column(pg.UUID, primary_key=True, default=uuid4))
+    
+    email: str = Field(unique=True, index=True, max_length=255)
+    name: str = Field(index=True, max_length=255)
+    
+    files: List[File] = Relationship(
+        back_populates="speaker", sa_relationship_kwargs={"lazy": "selectin"}
+    )
+
 
 AllModels = [User, File, Segment, TranscriptionCorrection, TranslationCorrection]
