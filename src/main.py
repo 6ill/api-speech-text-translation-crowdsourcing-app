@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from src.api.auth.router import router as auth_router
 from src.api.files.router import router as files_router
 from src.api.inference.router import router as inference_router
+from src.api.people.router import router as people_router
 from src.api.pipeline.router import router as pipeline_router
 
 
@@ -36,4 +37,5 @@ register_all_errors(app)
 app.include_router(auth_router, prefix=url_base+"/auth", tags=["Auth"])
 app.include_router(inference_router, prefix=url_base+"/inference", tags=["Inference"])
 app.include_router(files_router,prefix=url_base+"/files", tags=["Files"])
+app.include_router(people_router,prefix=url_base+"/people", tags=["People"])
 app.include_router(pipeline_router,prefix=url_base+"/pipeline", tags=["Pipeline"])
