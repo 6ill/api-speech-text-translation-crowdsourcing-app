@@ -89,6 +89,7 @@ class FileService:
             file_name=file.filename,
             storage_bucket=Config.STORAGE_BUCKET_AUDIO,
             storage_key=storage_key,
+            duration_seconds=0.0,
             mime_type=file.content_type,
             file_size=file.size if file.size else 0,
             status=FileStatus.UPLOADING

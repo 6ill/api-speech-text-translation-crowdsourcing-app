@@ -1,7 +1,7 @@
 # src/api/files/router.py
 
 from typing import Annotated, Optional
-from fastapi import APIRouter, Depends, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, Form, Query, UploadFile, status, File as FastAPIFile
 from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID
 
@@ -60,7 +60,7 @@ async def list_files(
 async def upload_file(
     session: SessionDep,
     user: CurrentUser,
-    file: UploadFile,
+    file: UploadFile = FastAPIFile(...),
     speaker_id: Optional[UUID] = Form(None) # Metadata dari Form-Data
 ):
     """
