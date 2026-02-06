@@ -1,19 +1,149 @@
-from fastapi import HTTPException, status
+import os
+from fastapi import HTTPException, UploadFile, status
+from sqlmodel import desc, select
+from sqlalchemy.orm import selectinload
 from sqlmodel.ext.asyncio.session import AsyncSession
-from uuid import UUID
-from src.db.models import File
+from uuid import UUID, uuid4
+
+from src.core.config import Config
+from src.core.logging import get_logger
+from src.core.storage import StorageClient
+from src.db.models import File, FileStatus, Role, User
+from src.core.errors import FileNotFound
+from src.workers.inference_tasks import run_transcription_task
+
+logger = get_logger("File_Service")
 
 class FileService:
     
     @staticmethod
-    async def get_file_status(file_id: UUID, db: AsyncSession) -> File:
+    async def get_file_status(file_id: UUID, session: AsyncSession, user: User) -> File:
         """
         Fetches the file record from the DB.
         """
-        file_record = await db.get(File, file_id)
+        query = select(File).where(File.id == file_id).where(File.user_id == user.id)
+        result = await session.exec(query)
+        file_record = result.first()
+
         if not file_record:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="File not found"
-            )
+            raise FileNotFound()
+        
         return file_record
+    
+    @staticmethod
+    async def get_all_files(session: AsyncSession, user: User, skip: int = 0, limit: int = 10):
+        """
+        Fetches files with strict ownership rules.
+        Admin: Sees all.
+        User: Sees only their own.
+        """
+        query = select(File).options(selectinload(File.speaker))
+
+        if user.role != Role.ADMIN:
+            query = query.where(File.user_id == user.id)
+
+        query = query.order_by(desc(File.created_at)).offset(skip).limit(limit)
+
+        result = await session.exec(query)
+        
+        return result.all()
+    
+    @staticmethod
+    async def get_file_by_id(file_id: UUID, session: AsyncSession, user: User) -> File:
+        query = select(File).options(selectinload(File.speaker)).where(File.id == file_id)
+
+        if user.role != Role.ADMIN:
+            query = query.where(File.user_id == user.id)
+
+        result = await session.exec(query)
+        file_record = result.first()
+
+        if not file_record:
+            raise FileNotFound()
+    
+        return file_record
+    
+
+    @staticmethod
+    async def upload_audio(
+        session: AsyncSession,
+        user: User,
+        file: UploadFile,
+        speaker_id: UUID | None
+    ) -> File:
+        """
+        Handle upload + saving to storage + trigger transcriptions
+        """
+        allowed_extensions = {".mp3", ".wav", ".m4a", ".ogg"}
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(status_code=400, detail="Invalid audio format. Allowed: mp3, wav, m4a, ogg")
+
+        new_file_uuid = uuid4() 
+        storage_key = f"audio/{user.id}/{new_file_uuid}{file_ext}" 
+        
+        new_file = File(
+            id=new_file_uuid,
+            user_id=user.id,
+            speaker_id=speaker_id,
+            file_name=file.filename,
+            storage_bucket=Config.STORAGE_BUCKET_AUDIO,
+            storage_key=storage_key,
+            mime_type=file.content_type,
+            file_size=file.size if file.size else 0,
+            status=FileStatus.UPLOADING
+        )
+        
+        session.add(new_file)
+        await session.commit()
+        await session.refresh(new_file)
+        
+        try:
+            success = StorageClient.upload_file_obj(
+                file.file, 
+                storage_key, 
+                file.content_type
+            )
+            
+            if not success:
+                raise Exception("S3 Upload failed")
+                
+        except Exception as e:
+            await session.delete(new_file)
+            await session.commit()
+            logger.error(f"Upload failed, DB record deleted: {e}")
+            raise HTTPException(status_code=500, detail="Failed to upload file to storage")
+
+        # Update Status & AUTO TRIGGER CELERY
+        new_file.status = FileStatus.UPLOADED
+        session.add(new_file)
+        await session.commit()
+        
+        run_transcription_task.delay(
+            file_id=str(new_file.id), 
+            storage_key=storage_key
+        )
+        
+        return new_file
+
+    @staticmethod
+    async def delete_file(file_id: UUID, session: AsyncSession, user: User):
+        file_record = await session.get(File, file_id)
+        if not file_record:
+            raise FileNotFound()
+            
+        is_owner = (file_record.user_id == user.id)
+
+        if not is_owner:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, 
+                detail="You do not have permission to delete this file"
+            )
+            
+        result = StorageClient.delete_file(file_record.storage_key)
+        if not result:
+            return result
+        
+        await session.delete(file_record)
+        await session.commit()
+        return True

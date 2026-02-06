@@ -77,3 +77,33 @@ class StorageClient:
         except ClientError as e:
             logger.error(f"Failed to download file '{object_name}': {e}", exc_info=True)
             return None
+
+    @staticmethod
+    def generate_presigned_url(object_name: str, bucket_name: str = Config.STORAGE_BUCKET_AUDIO, expiration=3600) -> str | None:
+        """
+        Generates a temporary URL for the frontend to play/download the audio directly from S3.
+        This will offload bandwidth from our API server.
+        """
+        client = StorageClient.get_client()
+        try:
+            response = client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': bucket_name, 'Key': object_name},
+                ExpiresIn=expiration
+            )
+
+            return response
+        except ClientError as e:
+            logger.error(f"Failed to generate presigned URL: {e}")
+            return None
+        
+    @staticmethod
+    def delete_file(object_name: str, bucket_name: str = Config.STORAGE_BUCKET_AUDIO):
+        """Deletes a file from S3."""
+        client = StorageClient.get_client()
+        try:
+            client.delete_object(Bucket=bucket_name, Key=object_name)
+            return True
+        except ClientError as e:
+            logger.error(f"Failed to delete file S3: {e}")
+            return False

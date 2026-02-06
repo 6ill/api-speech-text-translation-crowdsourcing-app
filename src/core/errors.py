@@ -43,6 +43,10 @@ class UserNotFound(WebException):
     """User Not found"""
     pass
 
+class InvalidAudioFormat(WebException):
+    """Invalid audio file format."""
+    pass
+
 
 def create_exception_handler(
     status_code: int, 
@@ -84,6 +88,17 @@ def register_all_errors(app: FastAPI):
             initial_detail={
                 "message": "File not found",
                 "error_code": "file_not_found",
+            },
+        ),
+    )
+
+    app.add_exception_handler(
+        InvalidAudioFormat,
+        create_exception_handler(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            initial_detail={
+                "message": "Invalid audio format. Allowed: mp3, wav, m4a, ogg",
+                "error_code": "invalid_file_format",
             },
         ),
     )
