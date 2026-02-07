@@ -120,7 +120,7 @@ class User(SQLModel, table=True):
     )
 
     files: List["File"] = Relationship(
-        back_populates="user", sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="user", sa_relationship_kwargs={"lazy": "selectin", "cascade": "all, delete-orphan"}
     )
 
     def __repr__(self) -> str:
@@ -149,7 +149,7 @@ class File(SQLModel, table=True):
 
     user: User = Relationship(back_populates="files")
     segments: List["Segment"] = Relationship(
-        back_populates="file", sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="file", sa_relationship_kwargs={"lazy": "selectin", "cascade": "all, delete-orphan"}
     )
     speaker: Optional["People"] = Relationship(back_populates="files")
 
@@ -170,10 +170,10 @@ class Segment(SQLModel, table=True):
 
     file: File = Relationship(back_populates="segments")
     transcription_corrections: List["TranscriptionCorrection"] = Relationship(
-        back_populates="segment", sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="segment", sa_relationship_kwargs={"lazy": "selectin", "cascade": "all, delete-orphan"}
     )
     translation_corrections: List["TranslationCorrection"] = Relationship(
-        back_populates="segment", sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="segment", sa_relationship_kwargs={"lazy": "selectin", "cascade": "all, delete-orphan"}
     )
 
     def __repr__(self):
