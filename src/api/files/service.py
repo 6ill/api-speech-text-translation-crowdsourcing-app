@@ -141,10 +141,17 @@ class FileService:
                 detail="You do not have permission to delete this file"
             )
             
-        result = StorageClient.delete_file(file_record.storage_key)
-        if not result:
-            return result
+        storage_key_to_delete = file_record.storage_key
+
+        try:
+            await session.delete(file_record)
+            await session.commit()
+            
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Database deletion failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to delete file record: {str(e)}")
+
+        StorageClient.delete_file(storage_key_to_delete)
         
-        await session.delete(file_record)
-        await session.commit()
         return True
