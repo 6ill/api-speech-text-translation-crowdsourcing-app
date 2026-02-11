@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from src.api.auth.router import router as auth_router
+from src.api.corrections.router import router as corrections_router
 from src.api.files.router import router as files_router
 from src.api.inference.router import router as inference_router
 from src.api.people.router import router as people_router
@@ -39,3 +40,4 @@ app.include_router(inference_router, prefix=url_base+"/inference", tags=["Infere
 app.include_router(files_router,prefix=url_base+"/files", tags=["Files"])
 app.include_router(people_router,prefix=url_base+"/people", tags=["People"])
 app.include_router(pipeline_router,prefix=url_base+"/pipeline", tags=["Pipeline"])
+app.include_router(corrections_router, prefix=url_base+"/corrections", tags=["Corrections"])
