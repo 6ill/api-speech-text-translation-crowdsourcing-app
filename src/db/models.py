@@ -189,7 +189,7 @@ class TranscriptionCorrection(SQLModel, table=True):
 
     # Foreign Key ke Segment (ondelete=CASCADE)
     segment_id: UUID = Field(foreign_key="segments.id", index=True, ondelete="CASCADE")
-
+    original_text: str = Field(sa_column=Column(pg.TEXT))
     corrected_text: str = Field(sa_column=Column(pg.TEXT))
     status: CorrectionStatus = Field(
         sa_column=Column(
@@ -210,7 +210,7 @@ class TranslationCorrection(SQLModel, table=True):
     id: UUID = Field(sa_column=Column(pg.UUID, primary_key=True, default=uuid4))
 
     segment_id: UUID = Field(foreign_key="segments.id", index=True, ondelete="CASCADE")
-
+    original_text: str = Field(sa_column=Column(pg.TEXT))
     corrected_text: str = Field(sa_column=Column(pg.TEXT))
     status: CorrectionStatus = Field(
         sa_column=Column(
