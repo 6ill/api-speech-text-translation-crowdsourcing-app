@@ -1,18 +1,12 @@
-from fastapi import UploadFile, HTTPException, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
-from typing import Any
-from uuid import UUID, uuid4
-import mimetypes
+from uuid import UUID
 
-from src.core.config import Config
-from src.core.errors import FileNotFound
+from src.core.errors import FileNotFound, FileNotTranscribed, TranslationInProgress
 from src.core.logging import get_logger
-from src.core.storage import StorageClient
 from src.db.models import File, Role, Segment, FileStatus, User
-from .schema import TranscribeResponse
+from src.workers.inference_tasks import run_translation_task
 
-from src.workers.inference_tasks import run_transcription_task
 
 logger = get_logger("InferenceService")
 
@@ -44,3 +38,35 @@ class InferenceService:
         segments = result.all()
 
         return segments
+    
+    @staticmethod
+    async def trigger_translation(
+        session: AsyncSession,
+        user: User,
+        file_id: UUID
+    ):
+        file_record = await session.get(File, file_id)
+        if not file_record:
+            raise FileNotFound()
+            
+        is_owner = (file_record.user_id == user.id)
+        
+        if not is_owner:
+            raise FileNotFound()
+
+        if file_record.status == FileStatus.TRANSLATING:
+            raise TranslationInProgress(
+                detail="Translation is already in progress. Please wait."
+            )
+        
+        if file_record.status not in [FileStatus.TRANSCRIBED, FileStatus.TRANSLATED]:
+             raise FileNotTranscribed()
+
+        file_record.status = FileStatus.TRANSLATING
+        session.add(file_record)
+        await session.commit()
+        await session.refresh(file_record)
+
+        run_translation_task.delay(file_id=str(file_id))
+
+        return file_record

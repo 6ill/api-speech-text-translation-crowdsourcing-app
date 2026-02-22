@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import gc
 import mlflow
 from pathlib import Path
 from sqlmodel import select
@@ -28,7 +29,7 @@ logger = get_logger("InferenceWorker")
 #     logger.critical("WORKER FAILED TO START: Could not load ASR model.")
 
 _GLOBAL_ASR_PIPELINE = None
-
+_GLOBAL_MT_PIPELINE = None
 def get_or_load_asr_pipeline():
     """
     Lazy loader for the ASR Pipeline.
@@ -155,3 +156,96 @@ def run_transcription_task(file_id: str, storage_key: str):
     except Exception as e:
         logger.error(f"[Task ID: {file_id}] Transcription failed: {e}", exc_info=True)
         pass
+    
+
+def get_translation_pipeline():
+    """
+    Lazy loading model pipeline to save VRAM when idle.
+    """
+    global _GLOBAL_MT_PIPELINE
+    if _GLOBAL_MT_PIPELINE is not None:
+        return _GLOBAL_MT_PIPELINE
+    
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    logger.info(f"Loading Translation Model: {Config.MT_MODEL_NAME} on {device}...")
+    
+    _GLOBAL_MT_PIPELINE = pipeline(
+        "text-generation",
+        model=Config.MT_MODEL_NAME,
+        torch_dtype=torch.float16,
+        device_map="auto",
+        max_new_tokens=256,
+    )
+    
+    return _GLOBAL_MT_PIPELINE
+
+@celery_app.task(name="tasks.run_translation_task", queue="inference_queue")
+def run_translation_task(file_id: str):
+    logger.info(f"Starting translation task for File ID: {file_id}")
+    
+    try:
+        llm_pipe = get_translation_pipeline()
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        return
+        
+    with db_session_scope() as session:
+        file_record = session.get(File, file_id)
+        if not file_record:
+            logger.error("File not found.")
+            return
+
+        segments = session.exec(
+            select(Segment).where(Segment.file_id == file_id).order_by(Segment.start_timestamp)
+        ).all()
+
+        total_segments = len(segments)
+        logger.info(f"Translating {total_segments} segments...")
+
+        
+        for index, seg in enumerate(segments):
+            original_text = seg.transcription_text
+            
+            if not original_text or len(original_text.strip()) == 0:
+                continue
+
+            messages = [
+                {"role": "system", "content": "You are a professional translator. Translate the following Indonesian text into English accurately. Do not add any explanations, notes, or conversational filler. Output only the translation."},
+                {"role": "user", "content": original_text},
+            ]
+            
+            # Generate
+            try:
+                outputs = llm_pipe(
+                    messages, 
+                    temperature=0.1
+                )
+                
+                generated_text = outputs[0]["generated_text"][-1]["content"]
+                
+                translated_text = generated_text.strip()
+                
+                seg.translation_text = translated_text
+                
+                if index % 10 == 0:
+                    logger.info(f"Translated {index}/{total_segments}")
+
+            except Exception as e:
+                logger.error(f"Error translating segment {seg.id}: {e}")
+                continue
+
+        # Update File Status & Commit
+        file_record.status = FileStatus.TRANSLATED
+        session.add(file_record)
+        session.commit()
+        
+        logger.info(f"Translation completed for File ID: {file_id}")
+
+    global _GLOBAL_MT_PIPELINE
+    _GLOBAL_MT_PIPELINE = None
+    del llm_pipe              
+    
+    gc.collect()              
+    torch.cuda.empty_cache()  
+    
+    logger.info(f"Translation model unloaded to free VRAM.")

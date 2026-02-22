@@ -43,3 +43,23 @@ async def get_transcription_result(
             "segments": segments
         }
     }
+    
+@router.post("/{file_id}/translate", status_code=status.HTTP_201_CREATED)
+async def translate_file(
+    file_id: UUID,
+    session: SessionDep,
+    user: CurrentUser
+):
+    """
+    Trigger Machine Translation for a file.
+    User decides when to proceed to translation phase.
+    """
+    file_record = await InferenceService.trigger_translation(session, user, file_id)
+    
+    return {
+        "message": "Translation task started",
+        "data": {
+            "file_id": file_record.id,
+            "status": file_record.status
+        }
+    }

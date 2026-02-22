@@ -47,6 +47,13 @@ class InvalidAudioFormat(WebException):
     """Invalid audio file format."""
     pass
 
+class FileNotTranscribed(WebException):
+    """User tries to translate a file that has not been transcribed yet."""
+    pass
+
+class TranslationInProgress(WebException):
+    """File is already being translated."""
+    pass
 
 def create_exception_handler(
     status_code: int, 
@@ -165,6 +172,28 @@ def register_all_errors(app: FastAPI):
             initial_detail={
                 "message": "You do not have enough permissions to perform this action",
                 "error_code": "insufficient_permissions",
+            },
+        ),
+    )
+    
+    app.add_exception_handler(
+        FileNotTranscribed,
+        create_exception_handler(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            initial_detail={
+                "message": "File must be transcribed before translation",
+                "error_code": "file_not_transcribed",
+            },
+        ),
+    )
+    
+    app.add_exception_handler(
+        TranslationInProgress,
+        create_exception_handler(
+            status_code=status.HTTP_409_CONFLICT,
+            initial_detail={
+                "message": "Translation process is already running",
+                "error_code": "translation_in_progress",
             },
         ),
     )
