@@ -1,3 +1,4 @@
+import mlflow
 import torch
 import evaluate
 import gc
@@ -201,6 +202,20 @@ class ASRFineTuner:
         adapter_path = f"{self.output_dir}/final_adapter"
         model.save_pretrained(adapter_path)
         self.processor.save_pretrained(adapter_path)
+        
+        logger.info("Logging PEFT model to MLflow Run...")
+        components = {
+            "model": model,
+            "feature_extractor": self.processor.feature_extractor,
+            "tokenizer": self.processor.tokenizer
+        }
+        
+        mlflow.transformers.log_model(
+            transformers_model=components,
+            artifact_path="model_adapter",
+            task="automatic-speech-recognition"
+        )
+        
 
         # Cleanup VRAM
         del model

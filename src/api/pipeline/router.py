@@ -1,11 +1,14 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from src.api.auth.dependency import RoleChecker
 from src.workers.pipeline_tasks import run_cl_pipeline
-from src.db.models import PipelineTaskType
+from src.db.models import PipelineTaskType, Role
 from .schema import PipelineTriggerResponse
 
 router = APIRouter()
 
-@router.post("/trigger/{task_type}", response_model=PipelineTriggerResponse)
+allow_admin_only = Depends(RoleChecker([Role.ADMIN]))
+
+@router.post("/trigger/{task_type}", response_model=PipelineTriggerResponse, dependencies=[allow_admin_only])
 async def trigger_pipeline_manual(task_type: PipelineTaskType):
     """
     Manually triggers the Continual Learning Pipeline for a specific task (asr/mt).

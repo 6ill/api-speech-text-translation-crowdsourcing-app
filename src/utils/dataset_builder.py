@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from datasets import Dataset, Audio
 import json
 from pathlib import Path
@@ -13,7 +15,8 @@ from src.db.models import (
     TranscriptionCorrection, 
     Segment, 
     File, 
-    CorrectionStatus
+    CorrectionStatus,
+    TranslationCorrection
 )
 
 logger = get_logger("Dataset_Builder")
@@ -246,3 +249,63 @@ class ASRDatasetBuilder:
 
         # 3. Convert to HF Dataset
         return self.convert_to_hf_dataset(dataset_dicts)
+
+class MTDatasetBuilder:
+    def __init__(self, db_session: Session):
+        self.db = db_session
+        
+    def convert_to_hf_dataset(self, data_dicts: List[dict]) -> Dataset:
+        """
+        Converts list of dicts to Hugging Face Dataset object
+        """
+        if not data_dicts:
+            return Dataset.from_dict({})
+
+        ds = Dataset.from_dict({
+            "source_text": [d["source_text"] for d in data_dicts],
+            "target_text": [d["target_text"] for d in data_dicts]
+        })
+        
+        return ds
+
+    def fetch_training_data(self, min_samples: int, replay_ratio: float = 0.2) -> Tuple[Dataset, List[UUID]]:
+        """
+        Fetches approved new translation data + old data (replay).
+        Returns HF Dataset and list of used IDs.
+        """
+        stmt_new = select(TranslationCorrection).where(
+            TranslationCorrection.status == CorrectionStatus.APPROVED,
+            TranslationCorrection.used_for_training == False
+        ).limit(1000)
+        new_data = self.db.exec(stmt_new).all()
+        
+        count_new = len(new_data)
+        if count_new < min_samples:
+            logger.info(f"Not enough MT data. Found {count_new}, required {min_samples}.")
+            return None, []
+
+        if replay_ratio > 0:
+            count_replay = int((count_new * replay_ratio) / (1 - replay_ratio))
+            stmt_replay = select(TranslationCorrection).where(
+                TranslationCorrection.status == CorrectionStatus.APPROVED,
+                TranslationCorrection.used_for_training == True
+            ).order_by(func.random()).limit(count_replay)
+            replay_data = self.db.exec(stmt_replay).all()
+            
+            combined_data = new_data + replay_data
+        else:
+            combined_data = new_data
+
+        dataset_dicts = []
+        used_correction_ids = []
+        
+        for record in combined_data:
+            dataset_dicts.append({
+                "source_text": record.original_text,
+                "target_text": record.corrected_text
+            })
+            if not record.used_for_training:
+                used_correction_ids.append(record.id)
+                
+        
+        return dataset_dicts, used_correction_ids
