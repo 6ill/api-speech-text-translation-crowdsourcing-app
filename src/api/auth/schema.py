@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import List
 from uuid import UUID
 
+from src.db.models import Role
 from src.api.files.schema import FileStatusResponse
 
 class UserCreateModel(BaseModel):
@@ -13,5 +14,6 @@ class UserModel(BaseModel):
     id: UUID
     email: str
     created_at: datetime
+    role: Role
     password_hash: str = Field(exclude=True)
     files: List[FileStatusResponse]
