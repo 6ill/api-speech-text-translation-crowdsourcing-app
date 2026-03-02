@@ -95,6 +95,7 @@ lazy_loader==0.4
 librosa==0.11.0
 llvmlite==0.45.1
 loguru==0.7.3
+lxml==6.0.2
 Mako==1.3.10
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
@@ -124,6 +125,7 @@ peft==0.18.0
 pillow==12.0.0
 platformdirs==4.5.0
 pooch==1.8.2
+portalocker==3.2.0
 prometheus_client==0.23.1
 prompt_toolkit==3.0.52
 propcache==0.4.1
@@ -158,6 +160,7 @@ rich-toolkit==0.15.1
 rignore==0.7.6
 rsa==4.9.1
 s3transfer==0.14.0
+sacrebleu==2.6.0
 safetensors==0.6.2
 scikit-learn==1.7.2
 scipy==1.16.3
@@ -175,6 +178,7 @@ sqlparse==0.5.3
 stack-data==0.6.3
 starlette==0.49.3
 sympy==1.13.1
+tabulate==0.9.0
 threadpoolctl==3.6.0
 tokenizers==0.22.1
 torch==2.6.0+cu124
@@ -184,6 +188,7 @@ tornado==6.5.2
 tqdm==4.67.1
 traitlets==5.14.3
 transformers==4.57.1
+trl==0.28.0
 typer==0.20.0
 typer-slim==0.20.0
 typing-inspection==0.4.2
