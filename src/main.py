@@ -12,6 +12,7 @@ from src.api.pipeline.router import router as pipeline_router
 from src.core.config import Config
 from src.core.errors import register_all_errors
 from src.core.logging import get_logger, setup_global_logging
+from src.core.middlewares import register_all_middlewares
 from src.core.mlflow_client import load_model_pipeline
 from src.db.main import init_db
 
@@ -34,6 +35,7 @@ app = FastAPI(
 )
 
 register_all_errors(app)
+register_all_middlewares(app)
 
 app.include_router(auth_router, prefix=url_base+"/auth", tags=["Auth"])
 app.include_router(inference_router, prefix=url_base+"/inference", tags=["Inference"])

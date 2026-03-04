@@ -3,6 +3,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     LOG_LEVEL: str
+    # CORS
+    CORS_ORIGINS: list[str]
+    ALLOWED_HOSTS: list[str]
     # Auth
     JWT_SECRET: str
     JWT_ALGORITHM: str
