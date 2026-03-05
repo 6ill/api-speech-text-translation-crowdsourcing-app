@@ -2,9 +2,10 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID
 
-from src.core.errors import FileNotFound, FileNotTranscribed, TranslationInProgress
+from src.core.errors import FileNotFound, FileNotTranscribed, FileNotTranslated, TranslationInProgress
 from src.core.logging import get_logger
 from src.db.models import File, Role, Segment, FileStatus, User
+from src.utils.subtitle import generate_subtitle_content
 from src.workers.inference_tasks import run_translation_task
 
 
@@ -70,3 +71,39 @@ class InferenceService:
         run_translation_task.delay(file_id=str(file_id))
 
         return file_record
+    
+    @staticmethod
+    async def export_subtitles(
+        session: AsyncSession,
+        user: User,
+        file_id: UUID,
+        export_type: str, # "transcription" or "translation"
+        format_type: str  # "srt" or "vtt"
+    ) -> tuple[str, str]:
+        """
+        Return: (content_string, filename)
+        """
+        file_record = await session.get(File, file_id)
+        if not file_record or file_record.user_id != user.id:
+            raise FileNotFound()
+            
+        is_translation = (export_type == "translation")
+        
+        if is_translation and file_record.status not in [FileStatus.TRANSLATED]:
+            raise FileNotTranslated()
+            
+        if not is_translation and file_record.status not in [FileStatus.TRANSCRIBED, FileStatus.TRANSLATED, FileStatus.TRANSLATING]:
+            raise FileNotTranscribed()
+
+        segments = await InferenceService.get_segments_by_file_id(session, user, file_id)
+
+        is_vtt = (format_type == "vtt")
+        content = generate_subtitle_content(segments, is_translation=is_translation, is_vtt=is_vtt)
+
+        safe_title = "".join([c if c.isalnum() else "_" for c in file_record.file_name])
+        lang_code = "en" if is_translation else "id"
+        ext = "vtt" if is_vtt else "srt"
+        
+        filename = f"{safe_title}_{lang_code}.{ext}"
+
+        return content, filename

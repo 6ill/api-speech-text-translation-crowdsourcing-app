@@ -51,6 +51,10 @@ class FileNotTranscribed(WebException):
     """User tries to translate a file that has not been transcribed yet."""
     pass
 
+class FileNotTranslated(WebException):
+    """User tries to download a file that has not been translated yet."""
+    pass
+
 class TranslationInProgress(WebException):
     """File is already being translated."""
     pass
@@ -181,8 +185,19 @@ def register_all_errors(app: FastAPI):
         create_exception_handler(
             status_code=status.HTTP_400_BAD_REQUEST,
             initial_detail={
-                "message": "File must be transcribed before translation",
+                "message": "File must be transcribed first",
                 "error_code": "file_not_transcribed",
+            },
+        ),
+    )
+    
+    app.add_exception_handler(
+        FileNotTranslated,
+        create_exception_handler(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            initial_detail={
+                "message": "File must be translated first",
+                "error_code": "file_not_translated",
             },
         ),
     )

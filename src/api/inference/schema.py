@@ -1,3 +1,5 @@
+from enum import Enum
+
 from pydantic import BaseModel, ConfigDict
 from uuid import UUID
 from src.db.models import FileStatus
@@ -18,3 +20,11 @@ class SegmentResponse(BaseModel):
     translation_text: Optional[str] = None 
     
     model_config = ConfigDict(from_attributes=True)
+    
+class ExportType(str, Enum):
+    TRANSCRIPTION = "transcription"
+    TRANSLATION = "translation"
+
+class FormatType(str, Enum):
+    SRT = "srt"
+    VTT = "vtt"

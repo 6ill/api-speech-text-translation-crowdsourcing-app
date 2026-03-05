@@ -1,6 +1,8 @@
 from fastapi import (
     APIRouter, 
-    Depends, 
+    Depends,
+    Query,
+    Response, 
     UploadFile, 
     File as FastAPIFile, 
     HTTPException,
@@ -11,11 +13,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from typing import Annotated, Any
 from uuid import UUID
 
+import urllib
+
 from src.api.auth.dependency import get_current_user
 from src.db.main import get_session
 from src.db.models import User 
 from src.api.inference.service import InferenceService
-from src.api.inference.schema import TranscribeResponse
+from src.api.inference.schema import ExportType, FormatType, TranscribeResponse
 
 router = APIRouter()
 
@@ -63,3 +67,33 @@ async def translate_file(
             "status": file_record.status
         }
     }
+    
+@router.get("/{file_id}/export")
+async def export_subtitle_file(
+    file_id: UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    export_type: ExportType = Query(description="Select output task: transcription or translation"),
+    format: FormatType = Query(default=FormatType.SRT, description="Select subtitle format: srt or vtt"),
+):
+    """
+    Download segments as a Subtitle file (.srt or .vtt).
+    Browser will automatically download this response as a file.
+    """
+    content, filename = await InferenceService.export_subtitles(
+        session=session,
+        user=user,
+        file_id=file_id,
+        export_type=export_type.value,
+        format_type=format.value
+    )
+
+    encoded_filename = urllib.parse.quote(filename)
+
+    return Response(
+        content=content,
+        media_type="text/plain",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        }
+    )
