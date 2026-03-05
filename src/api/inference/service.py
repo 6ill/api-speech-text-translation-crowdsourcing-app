@@ -107,3 +107,36 @@ class InferenceService:
         filename = f"{safe_title}_{lang_code}.{ext}"
 
         return content, filename
+    
+    @staticmethod
+    async def get_full_text(
+        session: AsyncSession,
+        user: User,
+        file_id: UUID,
+        task_type: str # "transcription" or "translation"
+    ) -> str:
+        file_record = await session.get(File, file_id)
+        if not file_record or file_record.user_id != user.id:
+            raise FileNotFound()
+            
+        is_translation = (task_type == "translation")
+        
+        if is_translation:
+            if file_record.status != FileStatus.TRANSLATED:
+                raise FileNotTranslated()
+        else:
+            if file_record.status not in [FileStatus.TRANSCRIBED, FileStatus.TRANSLATING, FileStatus.TRANSLATED]:
+                raise FileNotTranscribed()
+
+        segments = await InferenceService.get_segments_by_file_id(session, user, file_id)
+
+        text_parts = []
+        for seg in segments:
+            text = seg.translation_text if is_translation else seg.transcription_text
+            
+            if text and text.strip():
+                text_parts.append(text.strip())
+
+        full_text = " ".join(text_parts)
+        
+        return full_text

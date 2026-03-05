@@ -97,3 +97,30 @@ async def export_subtitle_file(
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
         }
     )
+    
+@router.get("/{file_id}/full-text", status_code=status.HTTP_200_OK)
+async def get_inference_full_text(
+    file_id: UUID,
+    session: SessionDep,
+    user: CurrentUser,
+    task_type: ExportType = Query(description="Select the task type: transcription or translation"),
+):
+    """
+    Get the full concatenated text of a file's transcription or translation.
+    Returns a single string combining all segments.
+    """
+    full_text = await InferenceService.get_full_text(
+        session=session,
+        user=user,
+        file_id=file_id,
+        task_type=task_type.value
+    )
+    
+    return {
+        "message": f"Full {task_type.value} text retrieved successfully",
+        "data": {
+            "file_id": file_id,
+            "task_type": task_type.value,
+            "full_text": full_text
+        }
+    }
