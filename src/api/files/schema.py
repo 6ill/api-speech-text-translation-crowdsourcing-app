@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict
 from uuid import UUID
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from src.db.models import FileStatus
 
 class FileStatusResponse(BaseModel):
@@ -33,3 +33,12 @@ class FileDownloadResponse(BaseModel):
     file_id: UUID
     download_url: str
     expires_in_seconds: int
+    
+class FileListResponseWrapper(BaseModel):
+    message: str
+    data: List[FileResponse]
+    metadata: dict
+    
+class FileResponseWrapper(BaseModel):
+    message: str
+    data: FileResponse

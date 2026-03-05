@@ -10,7 +10,7 @@ from src.core.storage import StorageClient
 from src.db.main import get_session
 from src.db.models import Role, User
 from .service import FileService
-from .schema import FileStatusResponse
+from .schema import FileResponseWrapper, FileStatusResponse, FileListResponseWrapper
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
@@ -34,7 +34,7 @@ async def get_status_for_file(
 
 
 
-@router.get("/", status_code=status.HTTP_200_OK)
+@router.get("/", status_code=status.HTTP_200_OK, response_model=FileListResponseWrapper)
 async def list_files(
     session: SessionDep,
     user: CurrentUser,
@@ -73,7 +73,7 @@ async def upload_file(
         "data": new_file
     }
 
-@router.get("/{file_id}", status_code=status.HTTP_200_OK)
+@router.get("/{file_id}", status_code=status.HTTP_200_OK, response_model=FileResponseWrapper)
 async def get_file_detail(
     file_id: UUID,
     session: SessionDep,
