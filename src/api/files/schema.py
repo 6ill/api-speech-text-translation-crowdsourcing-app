@@ -42,3 +42,7 @@ class FileListResponseWrapper(BaseModel):
 class FileResponseWrapper(BaseModel):
     message: str
     data: FileResponse
+    
+class FileUpdate(BaseModel):
+    file_name: Optional[str] = None
+    speaker_id: Optional[UUID] = None

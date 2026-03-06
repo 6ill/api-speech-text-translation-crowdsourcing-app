@@ -10,7 +10,7 @@ from src.core.storage import StorageClient
 from src.db.main import get_session
 from src.db.models import Role, User
 from .service import FileService
-from .schema import FileResponseWrapper, FileStatusResponse, FileListResponseWrapper
+from .schema import FileResponseWrapper, FileStatusResponse, FileListResponseWrapper, FileUpdate
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
@@ -133,4 +133,27 @@ async def delete_file(
     return {
         "message": "File deleted successfully",
         "data": None
+    }
+    
+@router.patch("/{file_id}", status_code=status.HTTP_200_OK, response_model=FileResponseWrapper)
+async def update_file(
+    file_id: UUID,
+    update_data: FileUpdate,
+    session: SessionDep,
+    user: CurrentUser
+):
+    """
+    Update file metadata (e.g., file_name, speaker_id).
+    Only the fields provided in the request body will be updated.
+    """
+    updated_file = await FileService.update_file_metadata(
+        file_id=file_id, 
+        update_data=update_data, 
+        session=session, 
+        user=user
+    )
+    
+    return {
+        "message": "File metadata updated successfully",
+        "data": updated_file
     }

@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID, uuid4
 
+from .schema import FileUpdate
 from src.core.config import Config
 from src.core.logging import get_logger
 from src.core.storage import StorageClient
@@ -136,11 +137,8 @@ class FileService:
         is_owner = (file_record.user_id == user.id)
 
         if not is_owner:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, 
-                detail="You do not have permission to delete this file"
-            )
-            
+            raise FileNotFound()
+        
         storage_key_to_delete = file_record.storage_key
 
         try:
@@ -155,3 +153,24 @@ class FileService:
         StorageClient.delete_file(storage_key_to_delete)
         
         return True
+    
+    @staticmethod
+    async def update_file_metadata(
+        file_id: UUID, 
+        update_data: FileUpdate, 
+        session: AsyncSession, 
+        user: User
+    ) -> File:
+        file_record = await FileService.get_file_by_id(file_id, session, user)
+
+        update_dict = update_data.model_dump(exclude_unset=True)
+        
+        if not update_dict:
+            return file_record
+
+        file_record.sqlmodel_update(update_dict)
+        
+        session.add(file_record)
+        await session.commit()
+        
+        return await FileService.get_file_by_id(file_id, session, user)
