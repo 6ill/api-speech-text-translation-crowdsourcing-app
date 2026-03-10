@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
+from src.api.admin.router import router as admin_router
 from src.api.auth.router import router as auth_router
 from src.api.corrections.router import router as corrections_router
 from src.api.files.router import router as files_router
@@ -37,6 +38,7 @@ app = FastAPI(
 register_all_errors(app)
 register_all_middlewares(app)
 
+app.include_router(admin_router, prefix=url_base+"/admin", tags=["Admin"])
 app.include_router(auth_router, prefix=url_base+"/auth", tags=["Auth"])
 app.include_router(inference_router, prefix=url_base+"/inference", tags=["Inference"])
 app.include_router(files_router,prefix=url_base+"/files", tags=["Files"])
