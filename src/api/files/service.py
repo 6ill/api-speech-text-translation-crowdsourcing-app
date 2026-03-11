@@ -22,7 +22,10 @@ class FileService:
         """
         Fetches the file record from the DB.
         """
-        query = select(File).where(File.id == file_id).where(File.user_id == user.id)
+        query = select(File).where(File.id == file_id)
+        if user.role != Role.ADMIN:
+            query = query.where(File.user_id == user.id)
+                
         result = await session.exec(query)
         file_record = result.first()
 
@@ -135,8 +138,9 @@ class FileService:
             raise FileNotFound()
             
         is_owner = (file_record.user_id == user.id)
+        is_admin = user.role == Role.ADMIN
 
-        if not is_owner:
+        if not(is_owner or is_admin):
             raise FileNotFound()
         
         storage_key_to_delete = file_record.storage_key

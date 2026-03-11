@@ -49,7 +49,7 @@ class CorrectionService:
             
             file = await session.get(File, segment.file_id)
             
-            if file.user_id != user.id:
+            if file.user_id != user.id and user.role != Role.ADMIN:
                 raise FileNotFound()
 
             current_text_in_segment = getattr(segment, target_field)

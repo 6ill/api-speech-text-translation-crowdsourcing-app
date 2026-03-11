@@ -51,8 +51,9 @@ class InferenceService:
             raise FileNotFound()
             
         is_owner = (file_record.user_id == user.id)
+        is_admin = user.role == Role.ADMIN
         
-        if not is_owner:
+        if not (is_owner or is_admin):
             raise FileNotFound()
 
         if file_record.status == FileStatus.TRANSLATING:
@@ -84,7 +85,7 @@ class InferenceService:
         Return: (content_string, filename)
         """
         file_record = await session.get(File, file_id)
-        if not file_record or file_record.user_id != user.id:
+        if not file_record or (file_record.user_id != user.id and user.role != Role.ADMIN):
             raise FileNotFound()
             
         is_translation = (export_type == "translation")
@@ -116,7 +117,7 @@ class InferenceService:
         task_type: str # "transcription" or "translation"
     ) -> str:
         file_record = await session.get(File, file_id)
-        if not file_record or file_record.user_id != user.id:
+        if not file_record or (file_record.user_id != user.id and user.role != Role.ADMIN):
             raise FileNotFound()
             
         is_translation = (task_type == "translation")
