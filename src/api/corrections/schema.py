@@ -12,11 +12,6 @@ class CorrectionSubmit(BaseModel):
     segment_id: UUID
     corrected_text: str
 
-class CorrectionResponse(BaseModel):
-    id: UUID
-    segment_id: UUID
-    status: str
-
 class ReviewAction(str, Enum):
     APPROVE = "approve"
     REJECT = "reject"
