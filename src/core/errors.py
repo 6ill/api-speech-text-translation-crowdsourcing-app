@@ -59,6 +59,10 @@ class TranslationInProgress(WebException):
     """File is already being translated."""
     pass
 
+class PipelineIsNotActive(WebException):
+    """The configuration of pipeline for certain task is disabled"""
+    pass
+
 def create_exception_handler(
     status_code: int, 
     initial_detail: Any,
@@ -209,6 +213,17 @@ def register_all_errors(app: FastAPI):
             initial_detail={
                 "message": "Translation process is already running",
                 "error_code": "translation_in_progress",
+            },
+        ),
+    )
+
+    app.add_exception_handler(
+        PipelineIsNotActive,
+        create_exception_handler(
+            status_code=status.HTTP_409_CONFLICT,
+            initial_detail={
+                "message": "The pipeline for this task is not active",
+                "error_code": "pipeline_is_disabled",
             },
         ),
     )
