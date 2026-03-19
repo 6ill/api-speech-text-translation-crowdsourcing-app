@@ -38,7 +38,7 @@ services:
       # Kredensial untuk MLflow agar bisa mengakses S3
       AWS_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${STORAGE_SECRET_KEY}
-      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+      MLFLOW_S3_ENDPOINT_URL: http://object_storage:9000
     depends_on:
       postgres:
         condition: service_healthy
