@@ -117,6 +117,7 @@ def run_cl_pipeline(task_type_str: str = "asr"):
                 run_log.status = PipelineRunStatus.SKIPPED
                 run_log.message = msg
                 session.add(run_log)
+                session.commit()
                 return # Exit early
 
             # Update log with sample count
@@ -257,6 +258,7 @@ def run_cl_pipeline(task_type_str: str = "asr"):
             run_log.status = PipelineRunStatus.FAILED
             run_log.message = str(e)
             session.add(run_log)
+            session.commit()
             # Re-raise to alert Celery
             raise e
         
