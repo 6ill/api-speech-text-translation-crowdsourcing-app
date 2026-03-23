@@ -1,8 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 from src.api.auth.dependency import RoleChecker
-from src.core.errors import PipelineIsNotActive
-from src.workers.pipeline_tasks import run_cl_pipeline
 from src.db.main import get_session
 from src.db.models import PipelineTaskType, Role
 from typing import Annotated, Optional
@@ -21,24 +19,12 @@ async def trigger_pipeline_manual(task_type: PipelineTaskType, session: SessionD
     Manually triggers the Continual Learning Pipeline for a specific task (asr/mt).
     This is useful for testing or forced updates.
     """
-    try:
-        config = await PipelineService.get_config_by_task_type(task_type, session)
-
-        if config and not config.is_active:
-            return PipelineIsNotActive()
-
-        task = run_cl_pipeline.delay(task_type_str=task_type.value)
-        
-        return PipelineTriggerResponse(
-            task_id=task.id,
-            message=f"Pipeline for {task_type.value} triggered successfully.",
-            task_type=task_type.value
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to trigger pipeline: {str(e)}"
-        )
+    task_id = await PipelineService.trigger_pipeline(task_type, session)
+    return PipelineTriggerResponse(
+        task_id=task_id,
+        message=f"Pipeline for '{task_type.value}' triggered successfully.",
+        task_type=task_type.value,
+    )
     
 @router.get("/config", dependencies=[allow_admin_only])
 async def get_all_configs(session: SessionDep):

@@ -1,9 +1,12 @@
 from typing import List, Optional
 from uuid import UUID
+from fastapi import HTTPException, status
 from sqlmodel import select, col, desc
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.db.models import PipelineConfig, PipelineRunLog, PipelineTaskType
+from src.core.errors import PipelineIsNotActive
+from src.db.models import PipelineConfig, PipelineRunLog, PipelineRunStatus, PipelineTaskType
+from src.workers.pipeline_tasks import run_cl_pipeline
 from .schema import PipelineConfigUpdate, PipelineConfigResponse, PipelineRunLogResponse
 
 
@@ -80,3 +83,56 @@ class PipelineService:
             )
             out.append(resp)
         return out
+    
+    @staticmethod
+    async def get_config_by_task_type(
+        task_type: PipelineTaskType, session: AsyncSession
+    ) -> Optional[PipelineConfig]:
+        result = await session.exec(
+            select(PipelineConfig).where(PipelineConfig.task_type == task_type)
+        )
+        return result.first()
+ 
+    @staticmethod
+    async def is_pipeline_running(config_id, session: AsyncSession) -> bool:
+        """
+        Check if there is already a RUNNING job for this pipeline config.
+        This is the guard that prevents duplicate triggers.
+        """
+        result = await session.exec(
+            select(PipelineRunLog).where(
+                PipelineRunLog.config_id == config_id,
+                PipelineRunLog.status == PipelineRunStatus.RUNNING,
+            )
+        )
+        return result.first() is not None
+ 
+    @staticmethod
+    async def trigger_pipeline(
+        task_type: PipelineTaskType, session: AsyncSession
+    ) -> str:
+        """
+        Validates config + checks for in-progress run, then dispatches the
+        Celery task. Returns the Celery task ID.
+        """
+        config = await PipelineService.get_config_by_task_type(task_type, session)
+ 
+        if not config:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No pipeline config found for task type '{task_type.value}'.",
+            )
+ 
+        if not config.is_active:
+            raise PipelineIsNotActive()
+ 
+        already_running = await PipelineService.is_pipeline_running(config.id, session)
+        if already_running:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A '{task_type.value}' pipeline run is already in progress. Wait for it to finish.",
+            )
+ 
+        task = run_cl_pipeline.delay(task_type_str=task_type.value)
+        return task.id
+ 
