@@ -81,6 +81,13 @@ def run_cl_pipeline(task_type_str: str = "asr"):
         if not config.is_active:
             logger.info("Pipeline is disabled in config. Skipping.")
             return
+        
+        if _is_pipeline_running(config.id, session):
+            logger.warning(
+                f"[{task_type_str}] A run is already in RUNNING state. "
+                "Skipping this task to prevent duplicate execution."
+            )
+            return
 
         # 2. Initialize Run Log (Status: RUNNING)
         run_log = PipelineRunLog(
@@ -290,6 +297,20 @@ def _mark_data_as_used(session, correction_ids: List[UUID], task_type: PipelineT
     
     session.commit()
 
+def _is_pipeline_running(config_id, session) -> bool:
+    """
+    Return True if a RUNNING PipelineRunLog exists for this config.
+    Used by both the manual trigger endpoint (via service) and the
+    Celery Beat scheduler to prevent duplicate concurrent runs.
+    """
+    result = session.exec(
+        select(PipelineRunLog).where(
+            PipelineRunLog.config_id == config_id,
+            PipelineRunLog.status == PipelineRunStatus.RUNNING,
+        )
+    ).first()
+    return result is not None
+
 @celery_app.task(name="tasks.check_and_trigger_scheduled_pipelines", queue="ml_pipeline_queue")
 def check_and_trigger_scheduled_pipelines():
     """
@@ -313,6 +334,13 @@ def check_and_trigger_scheduled_pipelines():
                 # Parse cron string
                 cron = croniter(config.cron_schedule, window_start)
                 next_trigger = cron.get_next(datetime)
+                
+                if _is_pipeline_running(config.id, session):
+                    logger.warning(
+                        f"Scheduled trigger skipped for '{config.task_type}': "
+                        "a run is already in RUNNING state."
+                    )
+                    continue
                 
                 # If the 'next trigger' calculated from 1 hour ago
                 # falls between '1 hour ago' and 'now', it means it's time to run.
