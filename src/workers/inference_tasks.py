@@ -11,25 +11,19 @@ from uuid import UUID
 from src.celery_app import celery_app
 from src.core.config import Config
 from src.core.logging import get_logger
-from src.core.mlflow_client import load_model_pipeline
+from src.core.mlflow_client import load_model_from_registry
 from src.core.storage import StorageClient
 from src.db.main import get_sync_session
 from src.db.models import File, Segment, FileStatus
 
 logger = get_logger("InferenceWorker")
 
-# logger.info("Worker starting... Loading ASR Model...")
-# ASR_PIPELINE: Any = load_model_pipeline(
-#     Config.ASR_MODEL_NAME, 
-#     "automatic-speech-recognition", 
-#     "production"
-# )
-
-# if ASR_PIPELINE is None:
-#     logger.critical("WORKER FAILED TO START: Could not load ASR model.")
-
-_GLOBAL_ASR_PIPELINE = None
+_GLOBAL_ASR_PIPELINE = load_model_from_registry(
+    model_name=Config.ASR_MODEL_NAME,
+    alias="production",
+)
 _GLOBAL_MT_PIPELINE = None
+
 def get_or_load_asr_pipeline():
     """
     Lazy loader for the ASR Pipeline.
