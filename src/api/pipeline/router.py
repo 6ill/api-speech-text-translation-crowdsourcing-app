@@ -21,24 +21,18 @@ async def trigger_pipeline_manual(task_type: PipelineTaskType, session: SessionD
     Manually triggers the Continual Learning Pipeline for a specific task (asr/mt).
     This is useful for testing or forced updates.
     """
-    try:
-        config = await PipelineService.get_config_by_task_type(task_type, session)
+    config = await PipelineService.get_config_by_task_type(task_type, session)
 
-        if config and not config.is_active:
-            return PipelineIsNotActive()
+    if config and not config.is_active:
+        raise PipelineIsNotActive()
 
-        task = run_cl_pipeline.delay(task_type_str=task_type.value)
-        
-        return PipelineTriggerResponse(
-            task_id=task.id,
-            message=f"Pipeline for {task_type.value} triggered successfully.",
-            task_type=task_type.value
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to trigger pipeline: {str(e)}"
-        )
+    task = run_cl_pipeline.delay(task_type_str=task_type.value)
+    
+    return PipelineTriggerResponse(
+        task_id=task.id,
+        message=f"Pipeline for {task_type.value} triggered successfully.",
+        task_type=task_type.value
+    )
     
 @router.get("/config", dependencies=[allow_admin_only])
 async def get_all_configs(session: SessionDep):
