@@ -53,3 +53,37 @@ def load_model_from_registry(
     except Exception as e:
         logger.error(f"Failed to load model from MLflow Registry using alias '{alias}': {e}", exc_info=True)
         return None
+    
+def fetch_adapter_from_registry(
+    model_name: str, 
+    alias: str = "production"
+) -> Optional[str]:
+    """
+    Downloads the raw adapter folder from the MLflow Registry.
+    Returns the local path to the folder, or None if it fails/does not exist.
+    """
+    try:
+        mlflow.set_tracking_uri(Config.MLFLOW_TRACKING_URI) 
+        
+        os.environ["MLFLOW_S3_ENDPOINT_URL"] = Config.STORAGE_ENDPOINT_URL
+        os.environ["AWS_ACCESS_KEY_ID"] = Config.STORAGE_ACCESS_KEY
+        os.environ["AWS_SECRET_ACCESS_KEY"] = Config.STORAGE_SECRET_KEY
+        
+        model_uri = f"models:/{model_name}@{alias}"
+        logger.info(f"Mencari adapter di MLflow Registry: {model_uri}")
+
+        # Download the artifact. Since we used the PyFunc wrapper during registration,
+        # the original adapter file is stored in the "artifacts/adapter_files" subfolder.
+        local_dir = mlflow.artifacts.download_artifacts(artifact_uri=model_uri)
+        adapter_path = os.path.join(local_dir, "artifacts", "adapter_files")
+        
+        if os.path.exists(adapter_path):
+            logger.info(f"Adapter successfully downloaded to: {adapter_path}")
+            return adapter_path
+        else:
+            logger.warning(f"The adapter_files folder was not found in the artifact.")
+            return None
+
+    except Exception as e:
+        logger.warning(f"There is no model with the alias '{alias}' in MLflow for '{model_name}'. (There may be no fine-tuning results yet). Details: {e}")
+        return None
