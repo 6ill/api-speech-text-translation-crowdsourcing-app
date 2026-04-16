@@ -148,7 +148,6 @@ python-dotenv==1.2.1
 python-json-logger==4.0.0
 python-multipart==0.0.20
 pytz==2025.2
-pywin32==311
 PyYAML==6.0.3
 pyzmq==27.1.0
 RapidFuzz==3.14.3
@@ -181,9 +180,9 @@ sympy==1.13.1
 tabulate==0.9.0
 threadpoolctl==3.6.0
 tokenizers==0.22.1
-torch==2.6.0+cu124
-torchaudio==2.6.0+cu124
-torchvision==0.21.0+cu124
+torch==2.6.0
+torchaudio==2.6.0
+torchvision==0.21.0
 tornado==6.5.2
 tqdm==4.67.1
 traitlets==5.14.3

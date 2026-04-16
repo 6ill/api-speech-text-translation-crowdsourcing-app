@@ -2,34 +2,29 @@ from contextlib import contextmanager
 import gc
 import mlflow
 from pathlib import Path
+from peft import PeftModel
 from sqlmodel import select
 import torch
-from transformers import pipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline
 from typing import Any
 from uuid import UUID
 
 from src.celery_app import celery_app
 from src.core.config import Config
 from src.core.logging import get_logger
-from src.core.mlflow_client import load_model_pipeline
+from src.core.mlflow_client import fetch_adapter_from_registry, load_model_from_registry
 from src.core.storage import StorageClient
 from src.db.main import get_sync_session
 from src.db.models import File, Segment, FileStatus
 
 logger = get_logger("InferenceWorker")
 
-# logger.info("Worker starting... Loading ASR Model...")
-# ASR_PIPELINE: Any = load_model_pipeline(
-#     Config.ASR_MODEL_NAME, 
-#     "automatic-speech-recognition", 
-#     "production"
-# )
-
-# if ASR_PIPELINE is None:
-#     logger.critical("WORKER FAILED TO START: Could not load ASR model.")
-
-_GLOBAL_ASR_PIPELINE = None
+_GLOBAL_ASR_PIPELINE = load_model_from_registry(
+    model_name=Config.ASR_MODEL_NAME,
+    alias="production",
+)
 _GLOBAL_MT_PIPELINE = None
+
 def get_or_load_asr_pipeline():
     """
     Lazy loader for the ASR Pipeline.
@@ -159,24 +154,43 @@ def run_transcription_task(file_id: str, storage_key: str):
     
 
 def get_translation_pipeline():
-    """
-    Lazy loading model pipeline to save VRAM when idle.
-    """
     global _GLOBAL_MT_PIPELINE
     if _GLOBAL_MT_PIPELINE is not None:
         return _GLOBAL_MT_PIPELINE
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    logger.info(f"Loading Translation Model: {Config.MT_MODEL_NAME} on {device}...")
+    logger.info(f"Initializing MT Model on {device}...")
+    
+    base_model_id = Config.MT_BASE_MODEL_ID
+    
+    adapter_path = fetch_adapter_from_registry(Config.MT_MODEL_NAME, "production")
+    
+    logger.info("Loading Base Model MT dalam 4-bit...")
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True, 
+        bnb_4bit_compute_dtype=torch.float16
+    )
+    tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+    base_model = AutoModelForCausalLM.from_pretrained(
+        base_model_id, 
+        quantization_config=bnb_config, 
+        device_map="auto"
+    )
+    
+    if adapter_path:
+        model = PeftModel.from_pretrained(base_model, adapter_path)
+    else:
+        logger.warning("MT Adapter not found. Using base model.")
+        model = base_model
     
     _GLOBAL_MT_PIPELINE = pipeline(
         "text-generation",
-        model=Config.MT_MODEL_NAME,
-        torch_dtype=torch.float16,
-        device_map="auto",
+        model=model,
+        tokenizer=tokenizer,
         max_new_tokens=256,
     )
     
+    logger.info("MT Pipeline is READY.")
     return _GLOBAL_MT_PIPELINE
 
 @celery_app.task(name="tasks.run_translation_task", queue="inference_queue")

@@ -4,23 +4,20 @@ from datasets import Dataset, Audio
 import shutil
 from pathlib import Path
 
-TSV_PATH = r"D:\TABillGraceHizkia\test-static-dataset\test.tsv"
-AUDIO_DIR = r"D:\TABillGraceHizkia\test-static-dataset\test"
-OUTPUT_DIR = r"D:\TABillGraceHizkia\static_test_dataset_asr" 
+TSV_PATH = r"/home/cit/Tugas-Akhir/TABillGraceHizkia/test.tsv"
+AUDIO_DIR = r"/home/cit/Tugas-Akhir/TABillGraceHizkia/13/"
+OUTPUT_DIR = r"/home/cit/Tugas-Akhir/TABillGraceHizkia/static_test_dataset_asr" 
 
 def convert_to_hf_dataset():
     print("1. Membaca TSV...")
     # Format GigaSpeech: segment_id <tab> text
-    # Pastikan nama kolom sesuai dengan isi TSV
     df = pd.read_csv(TSV_PATH, sep="\t", header=None, names=["segment_id", "text"])
     
     # Buat dictionary untuk lookup cepat: segment_id -> text
-    # Ini penting agar kita tidak perlu looping dataframe berkali-kali
     transcript_map = dict(zip(df["segment_id"].astype(str), df["text"]))
     print(f"   Loaded {len(transcript_map)} transcripts mapping.")
 
     print("2. Memindai semua file audio (recursive)...")
-    # Cari semua file .wav di dalam AUDIO_DIR dan sub-foldernya
     audio_files = list(Path(AUDIO_DIR).rglob("*.wav"))
     print(f"   Ditemukan {len(audio_files)} file audio total di folder.")
 
@@ -30,11 +27,15 @@ def convert_to_hf_dataset():
     print("3. Mencocokkan Audio dengan Transkrip...")
     
     for audio_path in audio_files:
-        # Ambil nama file tanpa ekstensi sebagai segment_id
-        # Contoh: "path/to/0/0-1.wav" -> "0-1"
-        segment_id = audio_path.stem 
+        original_stem = audio_path.stem 
         
-        # Cari teks berdasarkan segment_id
+        parts = original_stem.split("-")
+        
+        if len(parts) >= 3:
+            segment_id = f"{parts[1]}-{parts[2]}"
+        else:
+            segment_id = original_stem
+        
         text = transcript_map.get(segment_id)
         
         if text:
@@ -43,7 +44,6 @@ def convert_to_hf_dataset():
                 "sentence": text
             })
         else:
-            # Audio ada, tapi tidak ada di TSV (jarang terjadi, tapi mungkin)
             missing_transcript_count += 1
 
     print(f"   Berhasil dicocokkan: {len(data_samples)}")
@@ -53,16 +53,13 @@ def convert_to_hf_dataset():
         print("ERROR: Tidak ada data yang cocok! Cek kembali path dan format ID.")
         return
 
-    # Ambil sampel secukupnya untuk test set (misal 100 agar evaluasi cepat)
-    # Hapus slicing [:100] jika ingin memproses SEMUA data
+    # Ambil sampel secukupnya untuk test set (Hapus slicing [:100] jika ingin semua)
     final_samples = data_samples[:100] 
     
     print(f"4. Memproses {len(final_samples)} sampel menjadi Dataset Hugging Face...")
     ds = Dataset.from_list(final_samples)
     
     # PENTING: Cast ke Audio 16kHz agar cocok dengan Whisper
-    # Saat ini terjadi, library 'datasets' akan membaca file audio dari path, 
-    # resample, dan menyimpannya dalam format internal Arrow.
     ds = ds.cast_column("audio", Audio(sampling_rate=16000))
     
     print(f"5. Menyimpan dataset ke disk: {OUTPUT_DIR}...")

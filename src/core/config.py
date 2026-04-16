@@ -20,7 +20,9 @@ class Settings(BaseSettings):
     SYNC_DATABASE_URL: str
     # Model Loading
     ASR_MODEL_NAME: str
+    ASR_BASE_MODEL_ID: str
     MT_MODEL_NAME: str
+    MT_BASE_MODEL_ID: str
     MLFLOW_TRACKING_URI: str
     MLFLOW_S3_ENDPOINT_URL: str
     MLFLOW_S3_ARTIFACT_ROOT: str

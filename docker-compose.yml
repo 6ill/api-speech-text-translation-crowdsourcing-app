@@ -27,6 +27,7 @@ services:
     image: python:3.10-slim
     command: >
       bash -c "pip install mlflow psycopg2-binary boto3 &&
+      mlflow db upgrade postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${MLFLOW_DB_NAME} &&
       mlflow server
       --host 0.0.0.0
       --port 5000
@@ -38,7 +39,7 @@ services:
       # Kredensial untuk MLflow agar bisa mengakses S3
       AWS_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${STORAGE_SECRET_KEY}
-      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+      MLFLOW_S3_ENDPOINT_URL: http://object_storage:9000
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,6 +82,9 @@ services:
   #   depends_on:
   #     - redis
   #     - backend
+  # volume:
+  #     - ./src:/app/src
+  #     - hf_cache:/app/cache/huggingface
 
   # # 7. Scheduler (Celery Beat)
   # celery_beat:
@@ -107,3 +111,4 @@ services:
 volumes:
   postgres_data:
   rustfs_data: 
+  hf_cache:

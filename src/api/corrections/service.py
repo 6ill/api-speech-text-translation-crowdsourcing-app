@@ -147,12 +147,10 @@ class CorrectionService:
             target_status = CorrectionStatus.REJECTED
         elif payload.action == ReviewAction.RESET:
             target_status = CorrectionStatus.PENDING
-            
-        is_training_ready = (payload.action == ReviewAction.APPROVE)
         
         for correction in corrections:
             correction.status = target_status
-            correction.used_for_training = is_training_ready
+            correction.used_for_training = False
             session.add(correction)
             updated_count += 1
             
