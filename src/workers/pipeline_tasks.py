@@ -13,6 +13,7 @@ from sqlmodel import select, col
 from src.celery_app import celery_app
 from src.core.config import Config
 from src.core.logging import get_logger
+from src.core.mlflow_client import fetch_adapter_from_registry
 
 # Imports from our modules
 from src.db.main import get_sync_session
@@ -66,9 +67,17 @@ def run_cl_pipeline(task_type_str: str = "asr"):
             logger.critical(f"CRITICAL: Base model not found at {LOCAL_MODEL_PATH}.")
             return
     else:
-        LOCAL_MODEL_PATH = "meta-llama/Llama-3.2-3B-Instruct"
+        BASE_MODEL_ID = Config.MT_BASE_MODEL_ID
+        model_registry_name = Config.MT_MODEL_NAME
     
     
+    logger.info(f"Checking MLflow Registry for existing adapter: {model_registry_name}")
+    existing_adapter_path = fetch_adapter_from_registry(model_registry_name, "production")
+    if existing_adapter_path:
+        logger.info("Found existing adapter. Continual Learning mode activated.")
+    else:
+        logger.info("No adapter found. Cold Start mode activated.")
+
     with db_session_scope() as session:
         # 1. Fetch Pipeline Configuration
         statement = select(PipelineConfig).where(PipelineConfig.task_type == task_type)
@@ -162,9 +171,7 @@ def run_cl_pipeline(task_type_str: str = "asr"):
                 })
 
                 # Initialize FineTuner
-                # Note: We use the base model name from Config. 
-                # Strategy: We train a FRESH adapter on (New + Replay) data.
-                # This avoids complexity of merging adapters repeatedly.
+                # ToDO: Change ASR conditional block to follow MT
                 if task_type == PipelineTaskType.ASR:
                     trainer = ASRFineTuner(
                         model_name_or_path=LOCAL_MODEL_PATH,
@@ -172,8 +179,9 @@ def run_cl_pipeline(task_type_str: str = "asr"):
                     )
                 else:
                     trainer = MTFineTuner(
-                        model_name_or_path=LOCAL_MODEL_PATH,
-                        output_dir=str(run_dir / "training_output")
+                        base_model_id=BASE_MODEL_ID,            
+                        output_dir=str(run_dir / "training_output"),
+                        existing_adapter_path=existing_adapter_path
                     )
                 
                 # Load Static Test Set from S3
@@ -230,6 +238,17 @@ def run_cl_pipeline(task_type_str: str = "asr"):
                     # Register Model to MLflow Registry
                     # We log the ADAPTER artifacts, not the full model (efficient)
                     # mlflow.log_artifact(adapter_path, artifact_path="model_adapter")
+
+                    # Custom PyFunc Class definition
+                    class AdapterWrapper(mlflow.pyfunc.PythonModel):
+                        def predict(self, context, model_input):
+                            pass
+
+                    mlflow.pyfunc.log_model(
+                        artifact_path="model_adapter",
+                        python_model=AdapterWrapper(),
+                        artifacts={"adapter_files": adapter_path}
+                    )
                     
                     # Register as a new version
                     model_uri = f"runs:/{run.info.run_id}/model_adapter"

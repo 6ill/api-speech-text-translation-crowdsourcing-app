@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     SYNC_DATABASE_URL: str
     # Model Loading
+    HF_TOKEN: str
     ASR_MODEL_NAME: str
     ASR_BASE_MODEL_ID: str
     MT_MODEL_NAME: str

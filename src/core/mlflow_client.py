@@ -70,20 +70,24 @@ def fetch_adapter_from_registry(
         os.environ["AWS_SECRET_ACCESS_KEY"] = Config.STORAGE_SECRET_KEY
         
         model_uri = f"models:/{model_name}@{alias}"
-        logger.info(f"Mencari adapter di MLflow Registry: {model_uri}")
+        logger.info(f"Fetching adapter from MLflow Registry: {model_uri}")
 
-        # Download the artifact. Since we used the PyFunc wrapper during registration,
-        # the original adapter file is stored in the "artifacts/adapter_files" subfolder.
+        # Download the entire PyFunc model artifact
         local_dir = mlflow.artifacts.download_artifacts(artifact_uri=model_uri)
-        adapter_path = os.path.join(local_dir, "artifacts", "adapter_files")
         
-        if os.path.exists(adapter_path):
-            logger.info(f"Adapter successfully downloaded to: {adapter_path}")
+        adapter_path = None
+        for root, dirs, files in os.walk(local_dir):
+            if "adapter_config.json" in files:
+                adapter_path = root
+                break
+        
+        if adapter_path:
+            logger.info(f"Adapter successfully located at: {adapter_path}")
             return adapter_path
         else:
-            logger.warning(f"The adapter_files folder was not found in the artifact.")
+            logger.warning(f"'adapter_config.json' not found inside the downloaded artifacts.")
             return None
 
     except Exception as e:
-        logger.warning(f"There is no model with the alias '{alias}' in MLflow for '{model_name}'. (There may be no fine-tuning results yet). Details: {e}")
+        logger.warning(f"Failed to fetch adapter '{model_name}@{alias}': {e}")
         return None

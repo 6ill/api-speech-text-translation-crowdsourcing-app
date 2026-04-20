@@ -1,4 +1,3 @@
-import mlflow
 import os
 import torch
 import evaluate
@@ -15,17 +14,19 @@ from src.core.logging import get_logger
 from src.core.storage import StorageClient
 from src.core.config import Config
 
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 logger = get_logger("MTFineTuner")
 
 class MTFineTuner:
-    def __init__(self, model_name_or_path: str, output_dir: str):
-        self.model_id = model_name_or_path
+    def __init__(self, base_model_id: str, output_dir: str, existing_adapter_path: str = None):
+        self.model_id = base_model_id
         self.output_dir = output_dir
+        self.existing_adapter_path = existing_adapter_path
         
         logger.info(f"Initializing MT Trainer for {self.model_id}")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, token=Config.HF_TOKEN)
         
-        # Konfigurasi padding standar untuk Llama 3
         self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = "right"
         
@@ -61,25 +62,43 @@ class MTFineTuner:
             bnb_4bit_compute_dtype=torch.float16,
         )
         
-        model = AutoModelForCausalLM.from_pretrained(
+        base_model = AutoModelForCausalLM.from_pretrained(
             self.model_id,
             quantization_config=bnb_config,
-            device_map="auto"
+            device_map="auto",
+            token=Config.HF_TOKEN
         )
         
-        peft_config = LoraConfig(
-            r=16,
-            lora_alpha=32,
-            lora_dropout=0.05,
-            bias="none",
-            task_type="CAUSAL_LM",
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"]
-        )
+        # Continual Learning Adapter Injection
+        if self.existing_adapter_path and os.path.exists(self.existing_adapter_path):
+            logger.info(f"Existing adapter found at {self.existing_adapter_path}. Resuming fine-tuning...")
+            model = PeftModel.from_pretrained(
+                base_model, 
+                self.existing_adapter_path, 
+                is_trainable=True
+            )
+        else:
+            logger.info("No previous adapter found. Initializing a NEW rs-LoRA adapter...")
+            peft_config = LoraConfig(
+                r=8,
+                lora_alpha=16,
+                lora_dropout=0,
+                bias="none",
+                task_type="CAUSAL_LM",
+                target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+                use_rslora=True,
+            )
+            model = get_peft_model(base_model, peft_config)
+            model.print_trainable_parameters()
+        
+        # Clean cache before training starts
+        torch.cuda.empty_cache()
+        gc.collect()
         
         training_args = SFTConfig(
             output_dir=self.output_dir,
             per_device_train_batch_size=batch_size,
-            gradient_accumulation_steps=4,
+            gradient_accumulation_steps=16,
             learning_rate=learning_rate,
             num_train_epochs=num_epochs,
             logging_steps=10,
@@ -87,14 +106,16 @@ class MTFineTuner:
             save_strategy="no", 
             report_to=["mlflow"],
             max_length=512,
-            completion_only_loss=True
+            completion_only_loss=True,
+            gradient_checkpointing=True,
+            gradient_checkpointing_kwargs={"use_reentrant": False}
         )
         
         trainer = SFTTrainer(
             model=model,
             train_dataset=train_encoded,
             eval_dataset=eval_encoded,
-            peft_config=peft_config,
+            # peft_config=peft_config, <--- FIX 2: Removed to prevent double wrapping
             processing_class=self.tokenizer,
             args=training_args,
         )
@@ -104,22 +125,11 @@ class MTFineTuner:
         
         adapter_path = os.path.join(self.output_dir, "final_mt_adapter")
         trainer.save_model(adapter_path)
+        self.tokenizer.save_pretrained(adapter_path)
         
-        logger.info("Logging PEFT model to MLflow Run...")
-        components = {
-            "model": trainer.model,
-            "tokenizer": self.tokenizer
-        }
-        
-        mlflow.transformers.log_model(
-            transformers_model=components, 
-            artifact_path="model_adapter",
-            task="text-generation"
-        )
-        
-        del model, trainer
-        torch.cuda.empty_cache()
+        del model, trainer, base_model
         gc.collect()
+        torch.cuda.empty_cache()
         
         return {}, adapter_path
 
@@ -127,21 +137,42 @@ class MTFineTuner:
         """Returns (baseline_bleu, new_bleu)"""
         bnb_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
         
+        logger.info("Loading Base Model ONCE for Comparative Evaluation...")
+        # Load the base model exactly once to prevent VRAM fragmentation
+        base_model = AutoModelForCausalLM.from_pretrained(
+            self.model_id, 
+            quantization_config=bnb_config, 
+            device_map="auto", 
+            token=Config.HF_TOKEN
+        )
+        
         logger.info("Evaluating Baseline MT Model...")
-        base_model = AutoModelForCausalLM.from_pretrained(self.model_id, quantization_config=bnb_config, device_map="auto")
-        baseline_bleu = self._run_eval(base_model, static_test_dataset)
         
+        if self.existing_adapter_path and os.path.exists(self.existing_adapter_path):
+            # Load baseline adapter with a specific name
+            model = PeftModel.from_pretrained(base_model, self.existing_adapter_path, adapter_name="baseline")
+            baseline_bleu = self._run_eval(model, static_test_dataset)
+            
+            logger.info("Evaluating New Fine-Tuned MT Model...")
+            # Hot-swap the adapter without reloading the massive base model
+            model.load_adapter(new_adapter_path, adapter_name="new_adapter")
+            model.set_adapter("new_adapter")
+            new_bleu = self._run_eval(model, static_test_dataset)
+            
+        else:
+            # No previous adapter, evaluate the pure base model
+            baseline_bleu = self._run_eval(base_model, static_test_dataset)
+            
+            logger.info("Evaluating New Fine-Tuned MT Model...")
+            model = PeftModel.from_pretrained(base_model, new_adapter_path)
+            new_bleu = self._run_eval(model, static_test_dataset)
+        
+        # Aggressive cleanup 
+        if 'model' in locals():
+            del model
         del base_model
-        torch.cuda.empty_cache()
-        
-        logger.info("Evaluating New Fine-Tuned MT Model...")
-        base_model_reloaded = AutoModelForCausalLM.from_pretrained(self.model_id, quantization_config=bnb_config, device_map="auto")
-        new_model = PeftModel.from_pretrained(base_model_reloaded, new_adapter_path)
-        new_bleu = self._run_eval(new_model, static_test_dataset)
-        
-        del new_model, base_model_reloaded
-        torch.cuda.empty_cache()
         gc.collect()
+        torch.cuda.empty_cache()
         
         return baseline_bleu, new_bleu
 
@@ -164,6 +195,11 @@ class MTFineTuner:
                 predictions.append(pred_text)
                 references.append([tgt])
                 
+                del inputs, outputs
+        
+        gc.collect()
+        torch.cuda.empty_cache()
+        
         result = self.bleu_metric.compute(predictions=predictions, references=references)
         return result["score"]
 
