@@ -11,25 +11,24 @@ class StorageClient:
     """
     S3 Compatible Storage Client (using boto3).
     """
-    _client = None
+    _internal_client = boto3.client(
+        "s3",
+        endpoint_url=Config.STORAGE_ENDPOINT_URL,
+        aws_access_key_id=Config.STORAGE_ACCESS_KEY,
+        aws_secret_access_key=Config.STORAGE_SECRET_KEY,
+        region_name="us-east-1", # Dummy region often required by boto3
+        config=BotoConfig(signature_version="s3v4")
+    )
 
-    @staticmethod
-    def get_client():
-        """Initializes and returns the boto3 client singleton."""
-        if StorageClient._client is None:
-            try:
-                StorageClient._client = boto3.client(
-                    "s3",
-                    endpoint_url=Config.STORAGE_ENDPOINT_URL,
-                    aws_access_key_id=Config.STORAGE_ACCESS_KEY,
-                    aws_secret_access_key=Config.STORAGE_SECRET_KEY,
-                    config=BotoConfig(signature_version="s3v4"),
-                )
-                logger.info(f"Storage client initialized for endpoint: {Config.STORAGE_ENDPOINT_URL}")
-            except Exception as e:
-                logger.error(f"Failed to initialize storage client: {e}", exc_info=True)
-                raise
-        return StorageClient._client
+    # Used STRICTLY to generate Presigned URLs for the browser
+    _external_client = boto3.client(
+        "s3",
+        endpoint_url=Config.STORAGE_EXTERNAL_URL,
+        aws_access_key_id=Config.STORAGE_ACCESS_KEY,
+        aws_secret_access_key=Config.STORAGE_SECRET_KEY,
+        region_name="us-east-1",
+        config=BotoConfig(signature_version="s3v4")
+    )
 
     @staticmethod
     def upload_file_obj(
@@ -41,9 +40,8 @@ class StorageClient:
         """
         Uploads a file-like object to the S3 bucket.
         """
-        client = StorageClient.get_client()
         try:
-            client.upload_fileobj(
+            StorageClient._internal_client.upload_fileobj(
                 file_obj,
                 bucket_name,
                 object_name,
@@ -67,9 +65,8 @@ class StorageClient:
         """
         Downloads a file from S3 and returns its content as bytes.
         """
-        client = StorageClient.get_client()
         try:
-            response = client.get_object(
+            response = StorageClient._internal_client.get_object(
                 Bucket=bucket_name, 
                 Key=object_name
             )
@@ -84,9 +81,8 @@ class StorageClient:
         Generates a temporary URL for the frontend to play/download the audio directly from S3.
         This will offload bandwidth from our API server.
         """
-        client = StorageClient.get_client()
         try:
-            response = client.generate_presigned_url(
+            response = StorageClient._external_client.generate_presigned_url(
                 'get_object',
                 Params={'Bucket': bucket_name, 'Key': object_name},
                 ExpiresIn=expiration
@@ -100,9 +96,8 @@ class StorageClient:
     @staticmethod
     def delete_file(object_name: str, bucket_name: str = Config.STORAGE_BUCKET_AUDIO):
         """Deletes a file from S3."""
-        client = StorageClient.get_client()
         try:
-            client.delete_object(Bucket=bucket_name, Key=object_name)
+            StorageClient._internal_client.delete_object(Bucket=bucket_name, Key=object_name)
             return True
         except ClientError as e:
             logger.error(f"Failed to delete file S3: {e}")
