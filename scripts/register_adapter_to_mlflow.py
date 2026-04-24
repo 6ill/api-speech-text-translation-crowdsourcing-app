@@ -9,8 +9,8 @@ sys.path.append(str(project_root))
 
 from src.core.config import Config
 
-ADAPTER_PATH = "/home/cit/Tugas-Akhir/TABillGraceHizkia/Llama-3.1-Artifact/checkpoint-2298"
-MLFLOW_MODEL_NAME = Config.MT_MODEL_NAME
+ADAPTER_PATH = "/home/cit/Tugas-Akhir/TABillGraceHizkia/whisper-qlora-checkpoint"
+MODEL_NAME = Config.ASR_MODEL_NAME
 
 # Create a "dummy" class so that MLflow will register this as an Official Model
 class AdapterWrapper(mlflow.pyfunc.PythonModel):
@@ -28,7 +28,7 @@ def register_unsloth_adapter():
     mlflow.set_experiment("Manual_Model_Registration")
     
     try:
-        with mlflow.start_run(run_name=f"Register Unsloth {MLFLOW_MODEL_NAME}") as run:
+        with mlflow.start_run(run_name=f"Register Unsloth {MODEL_NAME}") as run:
             print(f"Mengunggah isi folder adapter ke S3 (via PyFunc Wrapper)...")
             
             # Log model using PyFunc. 
@@ -39,10 +39,10 @@ def register_unsloth_adapter():
             )
             
             model_uri = f"runs:/{run.info.run_id}/model_adapter"
-            registered_model = mlflow.register_model(model_uri, MLFLOW_MODEL_NAME)
+            registered_model = mlflow.register_model(model_uri, MODEL_NAME)
             
             client = mlflow.tracking.MlflowClient()
-            client.set_registered_model_alias(MLFLOW_MODEL_NAME, "production", registered_model.version)
+            client.set_registered_model_alias(MODEL_NAME, "production", registered_model.version)
             
             print(f"\nUnslot adapter is successfully uploaded & registered into Registry!")
             
