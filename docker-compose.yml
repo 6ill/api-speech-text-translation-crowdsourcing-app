@@ -22,7 +22,7 @@ services:
     ports:
       - "6379:6379"
 
-  # 3. MLflow Server (Diperbarui dengan S3 Env Vars)
+  # 3. MLflow Server
   mlflow:
     image: python:3.10-slim
     command: >
@@ -31,72 +31,89 @@ services:
       mlflow server
       --host 0.0.0.0
       --port 5000
+      --allowed-hosts '*'
+      --cors-allowed-origins '*'
       --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${MLFLOW_DB_NAME}
       --default-artifact-root ${MLFLOW_S3_ARTIFACT_ROOT}"
     ports:
       - "5000:5000"
     environment:
-      # Kredensial untuk MLflow agar bisa mengakses S3
       AWS_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${STORAGE_SECRET_KEY}
-      MLFLOW_S3_ENDPOINT_URL: http://object_storage:9000
+      MLFLOW_S3_ENDPOINT_URL: http://object-storage:9100
+
     depends_on:
       postgres:
         condition: service_healthy
-      object_storage:
+      object-storage:
         condition: service_started
 
-  # # 4. Backend API (FastAPI)
-  # backend:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   command: gunicorn -w 4 -k uvicorn.workers.UvicornWorker src.main:app -b 0.0.0.0:8000
-  #   volumes:
-  #     - ./src:/app/src
-  #   ports:
-  #     - "8000:8000"
-  #   env_file: .env
-  #   depends_on:
-  #     - redis
-  #     - postgres
+  # 4. Backend API (FastAPI)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./src:/app/src
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
-  # # 5. WORKER PRIORITAS TINGGI (INFERENCE)
-  # worker_inference:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   command: celery -A src.celery_app worker --loglevel=info -Q inference_queue --concurrency=2
-  #   env_file: .env
-  #   depends_on:
-  #     - redis
-  #     - backend
+  # 5. WORKER (INFERENCE)
+  worker_inference:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A src.celery_app worker --loglevel=info -Q inference_queue -P solo
+    env_file: .env
+    depends_on:
+      - redis
+      - backend
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
-  # # 6. WORKER PRIORITAS RENDAH (PIPELINE)
-  # worker_pipeline:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   command: celery -A src.celery_app worker --loglevel=info -Q ml_pipeline_queue --concurrency=1
-  #   env_file: .env
-  #   depends_on:
-  #     - redis
-  #     - backend
-  # volume:
-  #     - ./src:/app/src
-  #     - hf_cache:/app/cache/huggingface
+  # 6. WORKER (PIPELINE)
+  worker_pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A src.celery_app worker --loglevel=info -Q ml_pipeline_queue -P solo
+    env_file: .env
+    depends_on:
+      - redis
+      - backend
+    volumes:
+        - ./src:/app/src
+        - hf_cache:/app/cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   # # 7. Scheduler (Celery Beat)
-  # celery_beat:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   command: celery -A src.celery_app beat --loglevel=info
-  #   env_file: .env
-  #   depends_on:
-  #     - redis
-  #     - backend
-  object_storage:
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A src.celery_app beat --loglevel=info
+    env_file: .env
+    depends_on:
+      - redis
+      - backend
+  object-storage:
     image: rustfs/rustfs:latest
     environment:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
@@ -105,8 +122,8 @@ services:
     volumes:
       - rustfs_data:/data 
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9100:9000"
+      - "9101:9001"
 
 volumes:
   postgres_data:

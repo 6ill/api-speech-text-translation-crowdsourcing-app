@@ -3,9 +3,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     LOG_LEVEL: str
-    # CORS
-    CORS_ORIGINS: list[str]
-    ALLOWED_HOSTS: list[str]
     # Auth
     JWT_SECRET: str
     JWT_ALGORITHM: str
@@ -19,6 +16,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     SYNC_DATABASE_URL: str
     # Model Loading
+    HF_TOKEN: str
     ASR_MODEL_NAME: str
     ASR_BASE_MODEL_ID: str
     MT_MODEL_NAME: str
@@ -28,6 +26,7 @@ class Settings(BaseSettings):
     MLFLOW_S3_ARTIFACT_ROOT: str
     # Object Storage
     STORAGE_ENDPOINT_URL: str
+    STORAGE_EXTERNAL_URL: str
     STORAGE_BUCKET_AUDIO: str
     STORAGE_BUCKET_TEST: str
     STORAGE_ACCESS_KEY: str
