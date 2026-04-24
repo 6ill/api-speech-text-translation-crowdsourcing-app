@@ -1,3 +1,4 @@
+.env.*
 note.txt
 models/
 # Byte-compiled / optimized / DLL files
