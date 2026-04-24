@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Union, Tuple
 from pathlib import Path
 import re
+import os
 
 from transformers import (
     AutoModelForSpeechSeq2Seq,
@@ -69,13 +70,18 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         if "input_ids" in batch:
             del batch["input_ids"]
 
+        # This aligns the input tensor dtype with the model's 4-bit compute dtype (c10::Half)
+        # preventing the "Input type (float) and bias type (c10::Half) should be the same" crash
+        batch["input_features"] = batch["input_features"].to(torch.float16)
+
         return batch
 
 
 class ASRFineTuner:
-    def __init__(self, model_name_or_path: str, output_dir: str):
-        self.model_id = model_name_or_path
+    def __init__(self, base_model_id: str, output_dir: str, existing_adapter_path: str = None):
+        self.model_id = base_model_id
         self.output_dir = output_dir
+        self.existing_adapter_path = existing_adapter_path
         self.processor = AutoProcessor.from_pretrained(self.model_id)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -86,7 +92,6 @@ class ASRFineTuner:
         """
         Loads model in 4-bit and attaches LoRA adapters.
         """
-        # 1. QLoRA Config (4-bit)
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -94,28 +99,43 @@ class ASRFineTuner:
             bnb_4bit_use_double_quant=True,
         )
 
-        # 2. Load Base Model
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        base_model = AutoModelForSpeechSeq2Seq.from_pretrained(
             self.model_id,
-            # quantization_config=bnb_config,
+            quantization_config=bnb_config,
+            torch_dtype=torch.float16,
             device_map="auto",
             use_cache=False,  # Disable cache for training
         )
+        def fp16_input_hook(module, args):
+            return (args[0].to(module.weight.dtype),) + args[1:]
 
-        # Prepare for k-bit training (gradient checkpointing, etc.)
-        # model = prepare_model_for_kbit_training(model)
+        base_model.model.encoder.conv1.register_forward_pre_hook(fp16_input_hook)
 
-        # 3. LoRA Config
-        # Target modules for Whisper usually involve query/value projections
-        config = LoraConfig(
-            r=32,
-            lora_alpha=64,
-            target_modules=["q_proj", "v_proj"],
-            lora_dropout=0.05,
-            bias="none",
+        base_model = prepare_model_for_kbit_training(
+            base_model, 
+            use_gradient_checkpointing=False
         )
 
-        model = get_peft_model(model, config)
+        if self.existing_adapter_path and os.path.exists(self.existing_adapter_path):
+            logger.info(f"Existing ASR adapter found at {self.existing_adapter_path}. Resuming fine-tuning...")
+            model = PeftModel.from_pretrained(
+                base_model, 
+                self.existing_adapter_path, 
+                is_trainable=True
+            )
+        else:
+            logger.info("No previous ASR adapter found. Initializing a NEW LoRA adapter...")
+            config = LoraConfig(
+                target_modules=["q_proj", "v_proj", "k_proj", "out_proj"],
+                r=16,
+                lora_alpha=32,
+                lora_dropout=0.1,
+                bias="none"
+            )
+            model = get_peft_model(base_model, config)
+            
+        # Required for gradient flow to LoRA adapter
+        model.enable_input_require_grads()
         model.print_trainable_parameters()
 
         return model
@@ -164,9 +184,9 @@ class ASRFineTuner:
         training_args = Seq2SeqTrainingArguments(
             output_dir=self.output_dir,
             per_device_train_batch_size=batch_size,
-            gradient_accumulation_steps=2,  # Help with VRAM
+            gradient_accumulation_steps=4,  # Help with VRAM
             learning_rate=learning_rate,
-            warmup_steps=50,
+            warmup_steps=100,
             num_train_epochs=num_epochs,
             eval_strategy="epoch",
             save_strategy="epoch",
@@ -181,6 +201,8 @@ class ASRFineTuner:
             load_best_model_at_end=True,
             metric_for_best_model="wer",
             greater_is_better=False,  # Lower WER is better
+            gradient_checkpointing=True,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
         )
 
         trainer = Seq2SeqTrainer(
@@ -203,25 +225,12 @@ class ASRFineTuner:
         model.save_pretrained(adapter_path)
         self.processor.save_pretrained(adapter_path)
         
-        logger.info("Logging PEFT model to MLflow Run...")
-        components = {
-            "model": model,
-            "feature_extractor": self.processor.feature_extractor,
-            "tokenizer": self.processor.tokenizer
-        }
-        
-        mlflow.transformers.log_model(
-            transformers_model=components,
-            artifact_path="model_adapter",
-            task="automatic-speech-recognition"
-        )
-        
 
         # Cleanup VRAM
         del model
         del trainer
-        torch.cuda.empty_cache()
         gc.collect()
+        torch.cuda.empty_cache()
 
         return metrics, adapter_path
 
@@ -266,36 +275,45 @@ class ASRFineTuner:
         logger.info("Evaluating Baseline Model...")
         # Load base model in 4-bit for efficient inference
         bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16
+            load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True
         )
         base_model = AutoModelForSpeechSeq2Seq.from_pretrained(
             self.model_id,
-            # quantization_config=bnb_config,
+            quantization_config=bnb_config,
+            torch_dtype=torch.float16,
             device_map="auto",
         )
-        baseline_wer = run_eval(base_model)
+        def fp16_input_hook(module, args):
+            return (args[0].to(module.weight.dtype),) + args[1:]
+
+        base_model.model.encoder.conv1.register_forward_pre_hook(fp16_input_hook)
+
+
+        logger.info("Evaluating Baseline Model...")
+        if self.existing_adapter_path and os.path.exists(self.existing_adapter_path):
+            model = PeftModel.from_pretrained(base_model, self.existing_adapter_path, adapter_name="baseline")
+            baseline_wer = run_eval(model)
+            
+            logger.info("Evaluating New Fine-Tuned Model...")
+            # Hot-swap the adapter without reloading the massive base model
+            model.load_adapter(new_adapter_path, adapter_name="new_adapter")
+            model.set_adapter("new_adapter")
+            new_model_wer = run_eval(model)
+        else:
+            baseline_wer = run_eval(base_model)
+            
+            logger.info("Evaluating New Fine-Tuned Model...")
+            model = PeftModel.from_pretrained(base_model, new_adapter_path)
+            new_model_wer = run_eval(model)
 
         # Cleanup Baseline
+        if 'model' in locals():
+            del model
+
         del base_model
-        torch.cuda.empty_cache()
-
-        # 2. Evaluate New Model (Base + Adapter)
-        logger.info("Evaluating New Fine-Tuned Model...")
-        # Reload base
-        base_model_reloaded = AutoModelForSpeechSeq2Seq.from_pretrained(
-            self.model_id,
-            # quantization_config=bnb_config,
-            device_map="auto",
-        )
-        # Load adapter
-        new_model = PeftModel.from_pretrained(base_model_reloaded, new_adapter_path)
-        new_model_wer = run_eval(new_model)
-
-        # Cleanup New Model
-        del new_model
-        del base_model_reloaded
-        torch.cuda.empty_cache()
         gc.collect()
+        torch.cuda.empty_cache()
 
         logger.info(
             f"Evaluation Result - Baseline WER: {baseline_wer}, New WER: {new_model_wer}"

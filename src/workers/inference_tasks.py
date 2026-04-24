@@ -5,7 +5,7 @@ from pathlib import Path
 from peft import PeftModel
 from sqlmodel import select
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline
+from transformers import AutoModelForCausalLM, AutoModelForSpeechSeq2Seq, AutoProcessor, AutoTokenizer, BitsAndBytesConfig, pipeline
 from typing import Any
 from uuid import UUID
 
@@ -19,10 +19,8 @@ from src.db.models import File, Segment, FileStatus
 
 logger = get_logger("InferenceWorker")
 
-_GLOBAL_ASR_PIPELINE = load_model_from_registry(
-    model_name=Config.ASR_MODEL_NAME,
-    alias="production",
-)
+_GLOBAL_ASR_PIPELINE = None
+
 _GLOBAL_MT_PIPELINE = None
 
 def get_or_load_asr_pipeline():
@@ -39,38 +37,44 @@ def get_or_load_asr_pipeline():
 
     logger.info("Initializing ASR Model (Lazy Load)...")
 
-    # Define absolute path to the specific folder
-    LOCAL_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "whisper_production" 
+    is_gpu = torch.cuda.is_available()
+    
+    base_model_id = Config.ASR_BASE_MODEL_ID
+    
+    logger.info(f"Fetching ASR adapter for {Config.ASR_MODEL_NAME} from MLflow...")
+    adapter_path = fetch_adapter_from_registry(Config.ASR_MODEL_NAME, "production")
 
-    try:
-        if LOCAL_MODEL_PATH.exists() and any(LOCAL_MODEL_PATH.iterdir()):
-            
-            # 1. Detect Hardware
-            is_gpu = torch.cuda.is_available()
-            device_arg = 0 if is_gpu else -1
-            torch_dtype = torch.float16 if is_gpu else torch.float32
-            
-            logger.info(f"Hardware Check -> CUDA Available: {is_gpu}. Using device index: {device_arg}")
-            
-            # 2. Load Native Transformers Pipeline
-            _GLOBAL_ASR_PIPELINE = pipeline(
-                task="automatic-speech-recognition",
-                model=str(LOCAL_MODEL_PATH),
-                tokenizer=str(LOCAL_MODEL_PATH),
-                device=device_arg,
-                torch_dtype=torch_dtype,
-                chunk_length_s=30 
-            )
-            
-            logger.info("Model loaded successfully into RAM.")
-            return _GLOBAL_ASR_PIPELINE
-        else:
-            logger.critical(f"Local model files not found at {LOCAL_MODEL_PATH}.")
-            return None
-            
-    except Exception as e:
-        logger.critical(f"Failed to load local model: {e}", exc_info=True)
-        return None
+    logger.info(f"Loading Base Model ASR ({base_model_id})...")
+    processor = AutoProcessor.from_pretrained(base_model_id)
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True
+    )
+
+    base_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        base_model_id,
+        quantization_config=bnb_config,
+        device_map="auto"
+    )
+
+    if adapter_path:
+        logger.info(f"Attaching LoRA Adapter to ASR from: {adapter_path}")
+        model = PeftModel.from_pretrained(base_model, adapter_path)
+    else:
+        logger.warning("ASR Adapter not found. Using raw Base Model as fallback.")
+        model = base_model
+
+    _GLOBAL_ASR_PIPELINE = pipeline(
+        task="automatic-speech-recognition",
+        model=model,
+        tokenizer=processor.tokenizer,
+        feature_extractor=processor.feature_extractor
+    )
+    
+    logger.info("ASR Pipeline is READY.")
+    return _GLOBAL_ASR_PIPELINE
 
 
 @contextmanager
