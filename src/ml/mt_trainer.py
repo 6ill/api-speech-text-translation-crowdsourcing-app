@@ -5,9 +5,6 @@ import gc
 from typing import Tuple, Dict
 from pathlib import Path
 
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from peft import LoraConfig, get_peft_model, PeftModel
-from trl import SFTTrainer, SFTConfig
 from datasets import Dataset
 
 from src.core.logging import get_logger
@@ -23,12 +20,9 @@ class MTFineTuner:
         self.model_id = base_model_id
         self.output_dir = output_dir
         self.existing_adapter_path = existing_adapter_path
+        self.max_seq_length = 512
         
         logger.info(f"Initializing MT Trainer for {self.model_id}")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, token=Config.HF_TOKEN)
-        
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.tokenizer.padding_side = "right"
         
         self.bleu_metric = evaluate.load("sacrebleu")
 
@@ -39,33 +33,29 @@ class MTFineTuner:
             src = example['source_text']
             tgt = example['target_text']
             
-            # 1. Kolom Prompt (Instruksi + Teks User)
-            prompt = f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{sys_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{src}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+            prompt = f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{sys_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{src}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{tgt}<|eot_id|>"
             
-            # 2. Kolom Completion (Jawaban Target)
-            completion = f"{tgt}<|eot_id|>"
-            
-            return {"prompt": prompt, "completion": completion}
+            return {"text": prompt}
 
-        # Mapping dataset dan hapus kolom lama agar kompatibel dengan TRL
         return dataset.map(format_row, remove_columns=dataset.column_names)
 
     def train(self, train_dataset: Dataset, eval_dataset: Dataset, num_epochs: int, batch_size: int, learning_rate: float) -> Tuple[Dict, str]:
         logger.info("Preparing MT Model for QLoRA Training...")
+
+        from unsloth import FastLanguageModel # avoid gpu not found in backend service
+        # avoid unsloth import order error
+        from peft import PeftModel
+        from trl import SFTTrainer, SFTConfig
         
         train_encoded = self._prepare_prompt_completion_dataset(train_dataset)
         eval_encoded = self._prepare_prompt_completion_dataset(eval_dataset)
-        
-        bnb_config = BitsAndBytesConfig(
+       
+         
+        base_model, self.tokenizer = FastLanguageModel.from_pretrained(
+            model_name=self.model_id,
+            max_seq_length=self.max_seq_length,
+            dtype=None,
             load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
-        )
-        
-        base_model = AutoModelForCausalLM.from_pretrained(
-            self.model_id,
-            quantization_config=bnb_config,
-            device_map="auto",
             token=Config.HF_TOKEN
         )
         
@@ -79,21 +69,18 @@ class MTFineTuner:
             )
         else:
             logger.info("No previous adapter found. Initializing a NEW rs-LoRA adapter...")
-            peft_config = LoraConfig(
+            model = FastLanguageModel.get_peft_model(
+                base_model,
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0,
                 bias="none",
-                task_type="CAUSAL_LM",
                 target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+                use_gradient_checkpointing="unsloth",
+                random_state=3407,
                 use_rslora=True,
+                loftq_config=None,
             )
-            model = get_peft_model(base_model, peft_config)
-            model.print_trainable_parameters()
-        
-        # Clean cache before training starts
-        torch.cuda.empty_cache()
-        gc.collect()
         
         training_args = SFTConfig(
             output_dir=self.output_dir,
@@ -105,17 +92,15 @@ class MTFineTuner:
             optim="paged_adamw_8bit",
             save_strategy="no", 
             report_to=["mlflow"],
-            max_length=512,
-            completion_only_loss=True,
-            gradient_checkpointing=True,
-            gradient_checkpointing_kwargs={"use_reentrant": False}
+            max_length=self.max_seq_length,
+            packing=True,
+            dataset_text_field="text",
         )
         
         trainer = SFTTrainer(
             model=model,
             train_dataset=train_encoded,
             eval_dataset=eval_encoded,
-            # peft_config=peft_config, <--- FIX 2: Removed to prevent double wrapping
             processing_class=self.tokenizer,
             args=training_args,
         )
@@ -124,7 +109,7 @@ class MTFineTuner:
         trainer.train()
         
         adapter_path = os.path.join(self.output_dir, "final_mt_adapter")
-        trainer.save_model(adapter_path)
+        model.save_pretrained(adapter_path)
         self.tokenizer.save_pretrained(adapter_path)
         
         del model, trainer, base_model
@@ -134,17 +119,19 @@ class MTFineTuner:
         return {}, adapter_path
 
     def evaluate_comparative(self, static_test_dataset: Dataset, new_adapter_path: str) -> Tuple[float, float]:
-        """Returns (baseline_bleu, new_bleu)"""
-        bnb_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
-        
         logger.info("Loading Base Model ONCE for Comparative Evaluation...")
-        # Load the base model exactly once to prevent VRAM fragmentation
-        base_model = AutoModelForCausalLM.from_pretrained(
-            self.model_id, 
-            quantization_config=bnb_config, 
-            device_map="auto", 
+        from unsloth import FastLanguageModel
+        from peft import PeftModel
+        
+        base_model, self.tokenizer = FastLanguageModel.from_pretrained(
+            model_name=self.model_id,
+            max_seq_length=self.max_seq_length,
+            dtype=None,
+            load_in_4bit=True,
             token=Config.HF_TOKEN
         )
+        
+        FastLanguageModel.for_inference(base_model)
         
         logger.info("Evaluating Baseline MT Model...")
         
