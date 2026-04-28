@@ -14,7 +14,7 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-RUN pip install --default-timeout=1000  torch torchaudio xformers --index-url https://download.pytorch.org/whl/cu124
+RUN pip install --default-timeout=1000  torch torchaudio torchvision xformers --index-url https://download.pytorch.org/whl/cu124
 
 COPY requirements.txt .
 RUN sed -i '/^torch/d' requirements.txt && \
@@ -25,7 +25,8 @@ RUN sed -i '/^torch/d' requirements.txt && \
     sed -i '/^transformers/d' requirements.txt && \
     sed -i '/^peft/d' requirements.txt
 
-RUN pip install "unsloth @ git+https://github.com/unslothai/unsloth.git"
+RUN pip install --no-deps "unsloth @ git+https://github.com/unslothai/unsloth.git" \
+    git+https://github.com/unslothai/unsloth_zoo.git
 
 RUN pip install -r requirements.txt
 

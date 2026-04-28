@@ -13,6 +13,7 @@ email-validator==2.3.0
 evaluate==0.4.6
 fastapi==0.121.1
 gevent==25.9.1
+hf-transfer
 hiredis==3.3.0
 huggingface-hub
 itsdangerous==2.2.0
