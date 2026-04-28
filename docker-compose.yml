@@ -76,7 +76,7 @@ services:
       - backend
     volumes:
       - ./src:/app/src
-      - hf_cache:/app/cache/huggingface
+      - hf_cache:/root/.cache/huggingface/hub
     deploy:
       resources:
         reservations:
@@ -97,7 +97,7 @@ services:
       - backend
     volumes:
         - ./src:/app/src
-        - hf_cache:/app/cache/huggingface
+        - hf_cache:/root/.cache/huggingface/hub
     deploy:
       resources:
         reservations:
