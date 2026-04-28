@@ -21,7 +21,8 @@ logger = get_logger("InferenceWorker")
 
 _GLOBAL_ASR_PIPELINE = None
 
-_GLOBAL_MT_PIPELINE = None
+_GLOBAL_MT_MODEL = None
+_GLOBAL_MT_TOKENIZER = None
 
 def get_or_load_asr_pipeline():
     """
@@ -127,7 +128,10 @@ def run_transcription_task(file_id: str, storage_key: str):
             result = asr_pipeline(
                 audio_bytes, 
                 return_timestamps=True,
-                language="id",
+                generate_kwargs={
+                    "language": "indonesian", 
+                    "task": "transcribe"
+                },
             )
             
             segments = []
@@ -157,52 +161,48 @@ def run_transcription_task(file_id: str, storage_key: str):
         pass
     
 
-def get_translation_pipeline():
-    global _GLOBAL_MT_PIPELINE
-    if _GLOBAL_MT_PIPELINE is not None:
-        return _GLOBAL_MT_PIPELINE
+def get_translation_model_and_tokenizer():
+    # Avoid GPU not detected in backend service container
+    from unsloth import FastLanguageModel
+
+    global _GLOBAL_MT_MODEL, _GLOBAL_MT_TOKENIZER
+    if _GLOBAL_MT_MODEL is not None:
+        return _GLOBAL_MT_MODEL, _GLOBAL_MT_TOKENIZER
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Initializing MT Model on {device}...")
     
     base_model_id = Config.MT_BASE_MODEL_ID
-    
     adapter_path = fetch_adapter_from_registry(Config.MT_MODEL_NAME, "production")
     
-    logger.info("Loading Base Model MT dalam 4-bit...")
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True, 
-        bnb_4bit_compute_dtype=torch.float16
-    )
-    tokenizer = AutoTokenizer.from_pretrained(base_model_id)
-    base_model = AutoModelForCausalLM.from_pretrained(
-        base_model_id, 
-        quantization_config=bnb_config, 
-        device_map="auto"
-    )
+    # Unsloth automatically handles the base model resolution if provided an adapter path
+    model_source = adapter_path if adapter_path else base_model_id
     
-    if adapter_path:
-        model = PeftModel.from_pretrained(base_model, adapter_path)
-    else:
-        logger.warning("MT Adapter not found. Using base model.")
-        model = base_model
-    
-    _GLOBAL_MT_PIPELINE = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=256,
+    logger.info(f"Loading MT Model from {model_source} in 4-bit...")
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=model_source,
+        max_seq_length=512,
+        dtype=None,
+        load_in_4bit=True,
+        token=Config.HF_TOKEN
     )
     
-    logger.info("MT Pipeline is READY.")
-    return _GLOBAL_MT_PIPELINE
+    # Crucial for doubling inference speed
+    FastLanguageModel.for_inference(model)
+    
+    _GLOBAL_MT_MODEL = model
+    _GLOBAL_MT_TOKENIZER = tokenizer
+    
+    logger.info("MT Model is READY.")
+    return _GLOBAL_MT_MODEL, _GLOBAL_MT_TOKENIZER
+
 
 @celery_app.task(name="tasks.run_translation_task", queue="inference_queue")
 def run_translation_task(file_id: str):
     logger.info(f"Starting translation task for File ID: {file_id}")
     
     try:
-        llm_pipe = get_translation_pipeline()
+        model, tokenizer = get_translation_model_and_tokenizer()
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
         return
@@ -232,16 +232,29 @@ def run_translation_task(file_id: str):
                 {"role": "user", "content": original_text},
             ]
             
-            # Generate
             try:
-                outputs = llm_pipe(
+                # Format using the tokenizer's chat template
+                text_prompt = tokenizer.apply_chat_template(
                     messages, 
-                    temperature=0.1
+                    tokenize=False, 
+                    add_generation_prompt=True
                 )
                 
-                generated_text = outputs[0]["generated_text"][-1]["content"]
+                inputs = tokenizer(text_prompt, return_tensors="pt").to("cuda")
                 
-                translated_text = generated_text.strip()
+                outputs = model.generate(
+                    **inputs, 
+                    max_new_tokens=256, 
+                    use_cache=True, 
+                    temperature=0.1,
+                    pad_token_id=tokenizer.eos_token_id
+                )
+                
+                input_length = inputs['input_ids'].shape[1]
+                translated_text = tokenizer.decode(
+                    outputs[0][input_length:], 
+                    skip_special_tokens=True
+                ).strip()
                 
                 seg.translation_text = translated_text
                 
@@ -259,11 +272,11 @@ def run_translation_task(file_id: str):
         
         logger.info(f"Translation completed for File ID: {file_id}")
 
-    global _GLOBAL_MT_PIPELINE
-    _GLOBAL_MT_PIPELINE = None
-    del llm_pipe              
+    global _GLOBAL_MT_MODEL, _GLOBAL_MT_TOKENIZER
+    _GLOBAL_MT_MODEL = None
+    _GLOBAL_MT_TOKENIZER = None
     
+    del model, tokenizer
     gc.collect()              
-    torch.cuda.empty_cache()  
-    
+    torch.cuda.empty_cache()
     logger.info(f"Translation model unloaded to free VRAM.")
