@@ -64,7 +64,8 @@ async def upload_file(
     speaker_id: Optional[UUID] = Form(None) # Metadata dari Form-Data
 ):
     """
-    Upload audio file. Automatically triggers transcription pipeline.
+    Upload an audio or video file. Videos will have their audio extracted automatically.
+    Automatically triggers the transcription pipeline.
     """
     new_file = await FileService.upload_audio(session, user, file, speaker_id)
     

@@ -1,10 +1,14 @@
 from contextlib import contextmanager
 import gc
+import os
+import subprocess
+import tempfile
 import mlflow
 from pathlib import Path
 from peft import PeftModel
 from sqlmodel import select
 import torch
+import torchaudio
 from transformers import AutoModelForCausalLM, AutoModelForSpeechSeq2Seq, AutoProcessor, AutoTokenizer, BitsAndBytesConfig, pipeline
 from typing import Any
 from uuid import UUID
@@ -19,10 +23,27 @@ from src.db.models import File, Segment, FileStatus
 
 logger = get_logger("InferenceWorker")
 
+_GLOBAL_VAD_MODEL = None
+_GLOBAL_VAD_UTILS = None
+
 _GLOBAL_ASR_PIPELINE = None
 
 _GLOBAL_MT_MODEL = None
 _GLOBAL_MT_TOKENIZER = None
+
+def get_vad_model():
+    """Lazy loader for Silero VAD to save memory."""
+    global _GLOBAL_VAD_MODEL, _GLOBAL_VAD_UTILS
+    
+    if _GLOBAL_VAD_MODEL is None:
+        logger.info("Initializing Silero VAD Model...")
+        # Trust repo is required for torch hub
+        _GLOBAL_VAD_MODEL, _GLOBAL_VAD_UTILS = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            trust_repo=True
+        )
+    return _GLOBAL_VAD_MODEL, _GLOBAL_VAD_UTILS
 
 def get_or_load_asr_pipeline():
     """
@@ -118,41 +139,145 @@ def run_transcription_task(file_id: str, storage_key: str):
             
             file_record.status = FileStatus.TRANSCRIBING
             session.commit()
-            
-            logger.info(f"[Task ID: {file_id}] Downloading from S3: {storage_key}")
-            audio_bytes = StorageClient.download_file_obj(storage_key)
-            if audio_bytes is None:
-                raise Exception("Failed to download file from S3.")
-
-            logger.info(f"[Task ID: {file_id}] Starting ML inference...")
-            result = asr_pipeline(
-                audio_bytes, 
-                return_timestamps=True,
-                generate_kwargs={
-                    "language": "indonesian", 
-                    "task": "transcribe"
-                },
-            )
-            
-            segments = []
-            for chunk in result.get("chunks", []):
-                start, end = chunk["timestamp"]
-                segments.append(
-                    Segment(
-                        file_id=file_uuid,
-                        start_timestamp=start or 0.0,
-                        end_timestamp=end or start or 0.0,
-                        transcription_text=chunk["text"].strip()
-                    )
+            with tempfile.TemporaryDirectory() as tmpdir:
+                file_ext = os.path.splitext(storage_key)[1].lower()
+                local_media_path = os.path.join(tmpdir, f"downloaded_media{file_ext}")
+                
+                logger.info(f"[Task ID: {file_id}] Downloading raw media from S3...")
+                
+                raw_media_bytes = StorageClient.download_file_obj(storage_key)
+                
+                if not raw_media_bytes:
+                    logger.error(f"[Task ID: {file_id}] Failed to download media from S3.")
+                    session.commit()
+                    return
+                    
+                # Write the bytes to a physical temp file so FFmpeg can read it
+                with open(local_media_path, "wb") as f:
+                    f.write(raw_media_bytes)
+                
+                final_audio_path = local_media_path
+                
+                allowed_video = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+                if file_ext in allowed_video:
+                    logger.info(f"[Task ID: {file_id}] Video detected. Extracting audio...")
+                    final_audio_path = os.path.join(tmpdir, "extracted_audio.mp3")
+                    
+                    subprocess.run([
+                        "ffmpeg", "-i", local_media_path,
+                        "-q:a", "0", "-map", "a", 
+                        final_audio_path, "-y"
+                    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    
+                    new_storage_key = storage_key.rsplit(".", 1)[0] + ".mp3"
+                    with open(final_audio_path, "rb") as extracted_file:
+                        StorageClient.upload_file_obj(
+                            file_obj=extracted_file, 
+                            object_name=new_storage_key, 
+                            content_type="audio/mpeg"
+                        )
+                    
+                    # Delete the massive raw video from S3 to save bucket space
+                    StorageClient.delete_file(storage_key)
+                    
+                    # Update the database to reflect the new extracted audio file
+                    file_record.storage_key = new_storage_key
+                    file_record.mime_type = "audio/mpeg"
+                    file_record.file_size = os.path.getsize(final_audio_path)
+                    session.commit()
+                    logger.info(f"[Task ID: {file_id}] Extraction complete. Raw video deleted from S3.")
+                
+                logger.info(f"[Task ID: {file_id}] Running Silero VAD for smart chunking...")
+                
+                vad_model, vad_utils = get_vad_model()
+                get_speech_timestamps, _, read_audio, _, _ = vad_utils
+                
+                # 1. Load audio. Silero requires exactly 16000Hz.
+                wav = read_audio(final_audio_path, sampling_rate=16000)
+                
+                # 2. Extract speech timestamps
+                # max_speech_duration_s forces natural cuts under 10 seconds
+                # min_speech_duration_ms ignores throat clears, coughs, and mic bumps
+                speech_timestamps = get_speech_timestamps(
+                    wav, 
+                    vad_model,
+                    threshold=0.4, 
+                    sampling_rate=16000, 
+                    max_speech_duration_s=7.0, 
+                    min_speech_duration_ms=350,
+                    min_silence_duration_ms=800,
+                    min_silence_at_max_speech=300,
+                    speech_pad_ms=100,   
                 )
-            
-            if not segments:
-                logger.warning(f"[Task ID: {file_id}] Transcription returned no segments.")
 
-            session.add_all(segments)
-            
-            file_record.status = FileStatus.TRANSCRIBED
-            file_record.duration_seconds = segments[-1].end_timestamp if segments else 0.0
+                if not speech_timestamps:
+                    logger.warning(f"[Task ID: {file_id}] VAD detected no speech. Skipping inference.")
+                    file_record.status = FileStatus.TRANSCRIBED
+                    session.commit()
+                    return
+
+                # 3. Slice the audio into pure-speech arrays for the pipeline
+                chunk_inputs = []
+                offsets = []
+                
+                for ts in speech_timestamps:
+                    start_sample = ts['start']
+                    end_sample = ts['end']
+                    
+                    # Hugging Face pipeline accepts raw 1D numpy arrays natively
+                    chunk_inputs.append(wav[start_sample:end_sample].numpy())
+                    offsets.append(start_sample / 16000.0) # Save the real start time in seconds
+
+                logger.info(f"[Task ID: {file_id}] Passing {len(chunk_inputs)} speech chunks to ML inference...")
+                
+                # 4. Process all chunks efficiently using batch_size
+                results = asr_pipeline(
+                    chunk_inputs, 
+                    return_timestamps=True,
+                    generate_kwargs={
+                        "language": "indonesian", 
+                        "task": "transcribe"
+                    },
+                    batch_size=4
+                )
+                
+                # Hugging Face returns a dict if there's 1 input, or a list of dicts for multiple
+                if not isinstance(results, list):
+                    results = [results]
+                
+                # 5. Map the isolated chunk timestamps back to the original audio's timeline
+                segments = []
+                for idx, (res, offset_sec) in enumerate(zip(results, offsets)):
+                    chunk_duration = len(chunk_inputs[idx]) / 16000.0
+                    
+                    # If model fails to return timestamps, fallback to the chunk's VAD boundaries
+                    chunks = res.get("chunks", [{"timestamp": (0.0, chunk_duration), "text": res.get("text", "")}])
+                    
+                    for chunk in chunks:
+                        c_start, c_end = chunk["timestamp"]
+                        
+                        # Add the VAD offset back to the pipeline's internal timestamp
+                        abs_start = (c_start or 0.0) + offset_sec
+                        abs_end = (c_end or chunk_duration) + offset_sec
+                        
+                        text = chunk.get("text", "").strip()
+                        if text:
+                            segments.append(
+                                Segment(
+                                    file_id=file_uuid,
+                                    start_timestamp=abs_start,
+                                    end_timestamp=abs_end,
+                                    transcription_text=text
+                                )
+                            )
+                
+                if not segments:
+                    logger.warning(f"[Task ID: {file_id}] Transcription returned no segments.")
+
+                session.add_all(segments)
+                
+                file_record.status = FileStatus.TRANSCRIBED
+                file_record.duration_seconds = segments[-1].end_timestamp if segments else 0.0
         
         logger.info(f"[Task ID: {file_id}] Transcription complete. Status: TRANSCRIBED.")
 

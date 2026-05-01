@@ -1,8 +1,11 @@
 import os
 from fastapi import HTTPException, UploadFile, status
+import shutil
 from sqlmodel import desc, select
 from sqlalchemy.orm import selectinload
 from sqlmodel.ext.asyncio.session import AsyncSession
+import subprocess
+import tempfile
 from uuid import UUID, uuid4
 
 from .schema import FileUpdate
@@ -78,13 +81,19 @@ class FileService:
         """
         Handle upload + saving to storage + trigger transcriptions
         """
-        allowed_extensions = {".mp3", ".wav", ".m4a", ".ogg"}
+        allowed_audio = {".mp3", ".wav", ".m4a", ".ogg"}
+        allowed_video = {".mp4", ".mov", ".avi", ".mkv"}
+        allowed_extensions = allowed_audio.union(allowed_video)
+        
         file_ext = os.path.splitext(file.filename)[1].lower()
         if file_ext not in allowed_extensions:
-            raise HTTPException(status_code=400, detail="Invalid audio format. Allowed: mp3, wav, m4a, ogg")
+            raise HTTPException(
+                status_code=400, 
+                detail="Invalid media format. Allowed: mp3, wav, m4a, ogg, mp4, mov, avi, mkv"
+            )
 
-        new_file_uuid = uuid4() 
-        storage_key = f"audio/{user.id}/{new_file_uuid}{file_ext}" 
+        new_file_uuid = uuid4()
+        storage_key = f"audio/{user.id}/{new_file_uuid}{file_ext}"
         
         new_file = File(
             id=new_file_uuid,
