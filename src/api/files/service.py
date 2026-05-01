@@ -1,11 +1,8 @@
 import os
 from fastapi import HTTPException, UploadFile, status
-import shutil
 from sqlmodel import desc, select
 from sqlalchemy.orm import selectinload
 from sqlmodel.ext.asyncio.session import AsyncSession
-import subprocess
-import tempfile
 from uuid import UUID, uuid4
 
 from .schema import FileUpdate
