@@ -3,20 +3,16 @@ import gc
 import os
 import subprocess
 import tempfile
-import mlflow
-from pathlib import Path
 from peft import PeftModel
 from sqlmodel import select
 import torch
-import torchaudio
-from transformers import AutoModelForCausalLM, AutoModelForSpeechSeq2Seq, AutoProcessor, AutoTokenizer, BitsAndBytesConfig, pipeline
-from typing import Any
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, BitsAndBytesConfig, pipeline
 from uuid import UUID
 
 from src.celery_app import celery_app
 from src.core.config import Config
 from src.core.logging import get_logger
-from src.core.mlflow_client import fetch_adapter_from_registry, load_model_from_registry
+from src.core.mlflow_client import fetch_adapter_from_registry
 from src.core.storage import StorageClient
 from src.db.main import get_sync_session
 from src.db.models import File, Segment, FileStatus
