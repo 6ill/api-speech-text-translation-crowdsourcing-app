@@ -18,6 +18,7 @@ class FileStatus(StrEnum):
     TRANSCRIBED = "transcribed"
     TRANSLATING = "translating"
     TRANSLATED = "translated"
+    FAILED = "failed"
 
 
 class CorrectionStatus(StrEnum):

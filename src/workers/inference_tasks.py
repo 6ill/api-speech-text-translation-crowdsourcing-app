@@ -145,6 +145,7 @@ def run_transcription_task(file_id: str, storage_key: str):
                 
                 if not raw_media_bytes:
                     logger.error(f"[Task ID: {file_id}] Failed to download media from S3.")
+                    file_record.status = FileStatus.FAILED
                     session.commit()
                     return
                     
@@ -279,7 +280,14 @@ def run_transcription_task(file_id: str, storage_key: str):
 
     except Exception as e:
         logger.error(f"[Task ID: {file_id}] Transcription failed: {e}", exc_info=True)
-        pass
+        try:
+            with db_session_scope() as session:
+                file_record = session.get(File, file_uuid)
+                if file_record:
+                    file_record.status = FileStatus.FAILED
+                    session.commit()
+        except Exception as db_e:
+            logger.error(f"[Task ID: {file_id}] Failed to write FAILED status to DB: {db_e}")
     
 
 def get_translation_model_and_tokenizer():
@@ -326,78 +334,93 @@ def run_translation_task(file_id: str):
         model, tokenizer = get_translation_model_and_tokenizer()
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
+        with db_session_scope() as session:
+            file_record = session.get(File, UUID(file_id))
+            if file_record:
+                file_record.status = FileStatus.FAILED
         return
-        
-    with db_session_scope() as session:
-        file_record = session.get(File, file_id)
-        if not file_record:
-            logger.error("File not found.")
-            return
-
-        segments = session.exec(
-            select(Segment).where(Segment.file_id == file_id).order_by(Segment.start_timestamp)
-        ).all()
-
-        total_segments = len(segments)
-        logger.info(f"Translating {total_segments} segments...")
-
-        
-        for index, seg in enumerate(segments):
-            original_text = seg.transcription_text
-            
-            if not original_text or len(original_text.strip()) == 0:
-                continue
-
-            messages = [
-                {"role": "system", "content": "You are a professional translator. Translate the following Indonesian text into English accurately. Do not add any explanations, notes, or conversational filler. Output only the translation."},
-                {"role": "user", "content": original_text},
-            ]
-            
-            try:
-                # Format using the tokenizer's chat template
-                text_prompt = tokenizer.apply_chat_template(
-                    messages, 
-                    tokenize=False, 
-                    add_generation_prompt=True
-                )
-                
-                inputs = tokenizer(text_prompt, return_tensors="pt").to("cuda")
-                
-                outputs = model.generate(
-                    **inputs, 
-                    max_new_tokens=256, 
-                    use_cache=True, 
-                    temperature=0.1,
-                    pad_token_id=tokenizer.eos_token_id
-                )
-                
-                input_length = inputs['input_ids'].shape[1]
-                translated_text = tokenizer.decode(
-                    outputs[0][input_length:], 
-                    skip_special_tokens=True
-                ).strip()
-                
-                seg.translation_text = translated_text
-                
-                if index % 10 == 0:
-                    logger.info(f"Translated {index}/{total_segments}")
-
-            except Exception as e:
-                logger.error(f"Error translating segment {seg.id}: {e}")
-                continue
-
-        # Update File Status & Commit
-        file_record.status = FileStatus.TRANSLATED
-        session.add(file_record)
-        session.commit()
-        
-        logger.info(f"Translation completed for File ID: {file_id}")
-
-    global _GLOBAL_MT_MODEL, _GLOBAL_MT_TOKENIZER
-    _GLOBAL_MT_MODEL = None
-    _GLOBAL_MT_TOKENIZER = None
     
-    del model, tokenizer
-    gc.collect()              
-    torch.cuda.empty_cache()
-    logger.info(f"Translation model unloaded to free VRAM.")
+    try:
+        with db_session_scope() as session:
+            file_record = session.get(File, file_id)
+            if not file_record:
+                logger.error("File not found.")
+                return
+
+            segments = session.exec(
+                select(Segment).where(Segment.file_id == file_id).order_by(Segment.start_timestamp)
+            ).all()
+
+            total_segments = len(segments)
+            logger.info(f"Translating {total_segments} segments...")
+
+            
+            for index, seg in enumerate(segments):
+                original_text = seg.transcription_text
+                
+                if not original_text or len(original_text.strip()) == 0:
+                    continue
+
+                messages = [
+                    {"role": "system", "content": "You are a professional translator. Translate the following Indonesian text into English accurately. Do not add any explanations, notes, or conversational filler. Output only the translation."},
+                    {"role": "user", "content": original_text},
+                ]
+                
+                try:
+                    # Format using the tokenizer's chat template
+                    text_prompt = tokenizer.apply_chat_template(
+                        messages, 
+                        tokenize=False, 
+                        add_generation_prompt=True
+                    )
+                    
+                    inputs = tokenizer(text_prompt, return_tensors="pt").to("cuda")
+                    
+                    outputs = model.generate(
+                        **inputs, 
+                        max_new_tokens=256, 
+                        use_cache=True, 
+                        temperature=0.1,
+                        pad_token_id=tokenizer.eos_token_id
+                    )
+                    
+                    input_length = inputs['input_ids'].shape[1]
+                    translated_text = tokenizer.decode(
+                        outputs[0][input_length:], 
+                        skip_special_tokens=True
+                    ).strip()
+                    
+                    seg.translation_text = translated_text
+                    
+                    if index % 10 == 0:
+                        logger.info(f"Translated {index}/{total_segments}")
+
+                except Exception as e:
+                    logger.error(f"Error translating segment {seg.id}: {e}")
+                    continue
+
+            # Update File Status & Commit
+            file_record.status = FileStatus.TRANSLATED
+            session.add(file_record)
+            session.commit()
+            
+            logger.info(f"Translation completed for File ID: {file_id}")
+    except Exception as e:
+        logger.error(f"[Task ID: {file_id}] Translation task failed: {e}", exc_info=True)
+        try:
+            with db_session_scope() as session:
+                file_record = session.get(File, UUID(file_id))
+                if file_record:
+                    file_record.status = FileStatus.FAILED
+                    session.commit()
+        except Exception as db_e:
+            logger.error(f"[Task ID: {file_id}] Failed to write FAILED status to DB: {db_e}")
+    finally:
+        global _GLOBAL_MT_MODEL, _GLOBAL_MT_TOKENIZER
+        _GLOBAL_MT_MODEL = None
+        _GLOBAL_MT_TOKENIZER = None
+        
+        del model, tokenizer
+        gc.collect()              
+        torch.cuda.empty_cache()
+        logger.info(f"Translation model unloaded to free VRAM.")
