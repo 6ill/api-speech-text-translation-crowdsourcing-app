@@ -110,7 +110,7 @@ def db_session_scope():
         session.close()
 
 @celery_app.task(name="tasks.run_transcription_task", queue="inference_queue")
-def run_transcription_task(file_id: str, storage_key: str):
+def run_transcription_task(file_id: str, storage_key: str, auto_translate: bool = False):
     """
     Synchronous Celery task.
     """
@@ -277,6 +277,10 @@ def run_transcription_task(file_id: str, storage_key: str):
                 file_record.duration_seconds = segments[-1].end_timestamp if segments else 0.0
         
         logger.info(f"[Task ID: {file_id}] Transcription complete. Status: TRANSCRIBED.")
+
+        if auto_translate:
+            logger.info(f"[Task ID: {file_id}] Auto-translate enabled. Triggering MT pipeline...")
+            run_translation_task.delay(file_id=file_id)
 
     except Exception as e:
         logger.error(f"[Task ID: {file_id}] Transcription failed: {e}", exc_info=True)

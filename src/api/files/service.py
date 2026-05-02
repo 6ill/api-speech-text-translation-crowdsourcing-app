@@ -73,7 +73,8 @@ class FileService:
         session: AsyncSession,
         user: User,
         file: UploadFile,
-        speaker_id: UUID | None
+        speaker_id: UUID | None,
+        auto_translate: bool = False,
     ) -> File:
         """
         Handle upload + saving to storage + trigger transcriptions
@@ -132,7 +133,8 @@ class FileService:
         
         run_transcription_task.delay(
             file_id=str(new_file.id), 
-            storage_key=storage_key
+            storage_key=storage_key,
+            auto_translate=auto_translate,
         )
         
         return new_file
