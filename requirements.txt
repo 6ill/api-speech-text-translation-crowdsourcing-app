@@ -8,7 +8,6 @@ boto3==1.40.61
 celery==5.5.3
 croniter==6.0.0
 cryptography==46.0.3
-datasets==3.6.0
 email-validator==2.3.0
 evaluate==0.4.6
 fastapi==0.121.1

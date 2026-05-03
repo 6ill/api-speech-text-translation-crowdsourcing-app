@@ -34,7 +34,10 @@ RUN pip install --default-timeout=1000 transformers==4.56.2 \
     peft \
     trl \
     accelerate \
+    "datasets<4.0.0" \
     bitsandbytes
+
+RUN pip install librosa soundfile
 
 COPY ./src ./src
 
