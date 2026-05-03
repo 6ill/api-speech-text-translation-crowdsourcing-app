@@ -273,10 +273,10 @@ def run_transcription_task(file_id: str, storage_key: str, auto_translate: bool 
 
                 session.add_all(segments)
                 
-                file_record.status = FileStatus.TRANSCRIBED
+                file_record.status = FileStatus.TRANSLATING if auto_translate else FileStatus.TRANSCRIBED
                 file_record.duration_seconds = segments[-1].end_timestamp if segments else 0.0
         
-        logger.info(f"[Task ID: {file_id}] Transcription complete. Status: TRANSCRIBED.")
+        logger.info(f"[Task ID: {file_id}] Transcription complete.")
 
         if auto_translate:
             logger.info(f"[Task ID: {file_id}] Auto-translate enabled. Triggering MT pipeline...")
