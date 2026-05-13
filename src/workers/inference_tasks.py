@@ -152,36 +152,43 @@ def run_transcription_task(file_id: str, storage_key: str, auto_translate: bool 
                 with open(local_media_path, "wb") as f:
                     f.write(raw_media_bytes)
                 
-                final_audio_path = local_media_path
+                # Create a highly compressed MP3 to serve to the frontend (Saves S3 bandwidth)
+                frontend_audio_path = os.path.join(tmpdir, "frontend_audio.mp3")
+                subprocess.run([
+                    "ffmpeg", "-i", local_media_path,
+                    "-b:a", "128k", "-map", "a", 
+                    frontend_audio_path, "-y"
+                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
-                allowed_video = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
-                if file_ext in allowed_video:
-                    logger.info(f"[Task ID: {file_id}] Video detected. Extracting audio...")
-                    final_audio_path = os.path.join(tmpdir, "extracted_audio.mp3")
-                    
-                    subprocess.run([
-                        "ffmpeg", "-i", local_media_path,
-                        "-q:a", "0", "-map", "a", 
-                        final_audio_path, "-y"
-                    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    
-                    new_storage_key = storage_key.rsplit(".", 1)[0] + ".mp3"
-                    with open(final_audio_path, "rb") as extracted_file:
-                        StorageClient.upload_file_obj(
-                            file_obj=extracted_file, 
-                            object_name=new_storage_key, 
-                            content_type="audio/mpeg"
-                        )
-                    
-                    # Delete the massive raw video from S3 to save bucket space
+                # Create a pristine, uncompressed 16kHz WAV strictly for ML inference (Prevents Time Drift)
+                inference_wav_path = os.path.join(tmpdir, "inference_ready.wav")
+                subprocess.run([
+                    "ffmpeg", "-i", local_media_path,
+                    "-ar", "16000",       # Force 16000Hz Sample Rate
+                    "-ac", "1",           # Force Mono
+                    "-c:a", "pcm_s16le",  # Uncompressed PCM (Zero Drift)
+                    inference_wav_path, "-y"
+                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+                # Upload the lightweight MP3 to S3 for the frontend audio player
+                new_storage_key = storage_key.rsplit(".", 1)[0] + ".mp3"
+                with open(frontend_audio_path, "rb") as extracted_file:
+                    StorageClient.upload_file_obj(
+                        file_obj=extracted_file, 
+                        object_name=new_storage_key, 
+                        content_type="audio/mpeg"
+                    )
+                
+                # Clean up the original massive upload from S3
+                if storage_key != new_storage_key:
                     StorageClient.delete_file(storage_key)
-                    
-                    # Update the database to reflect the new extracted audio file
-                    file_record.storage_key = new_storage_key
-                    file_record.mime_type = "audio/mpeg"
-                    file_record.file_size = os.path.getsize(final_audio_path)
-                    session.commit()
-                    logger.info(f"[Task ID: {file_id}] Extraction complete. Raw video deleted from S3.")
+                
+                # Update DB to point to the new MP3
+                file_record.storage_key = new_storage_key
+                file_record.mime_type = "audio/mpeg"
+                file_record.file_size = os.path.getsize(frontend_audio_path)
+                session.commit()
+                
                 
                 logger.info(f"[Task ID: {file_id}] Running Silero VAD for smart chunking...")
                 
@@ -189,7 +196,7 @@ def run_transcription_task(file_id: str, storage_key: str, auto_translate: bool 
                 get_speech_timestamps, _, read_audio, _, _ = vad_utils
                 
                 # 1. Load audio. Silero requires exactly 16000Hz.
-                wav = read_audio(final_audio_path, sampling_rate=16000)
+                wav = read_audio(inference_wav_path, sampling_rate=16000)
                 
                 # 2. Extract speech timestamps
                 # max_speech_duration_s forces natural cuts under 10 seconds
@@ -197,13 +204,13 @@ def run_transcription_task(file_id: str, storage_key: str, auto_translate: bool 
                 speech_timestamps = get_speech_timestamps(
                     wav, 
                     vad_model,
-                    threshold=0.4, 
+                    threshold=0.5, 
                     sampling_rate=16000, 
-                    max_speech_duration_s=7.0, 
-                    min_speech_duration_ms=350,
-                    min_silence_duration_ms=800,
-                    min_silence_at_max_speech=300,
-                    speech_pad_ms=100,   
+                    max_speech_duration_s=10.0,
+                    min_speech_duration_ms=400,
+                    min_silence_duration_ms=1000,
+                    min_silence_at_max_speech=250,
+                    speech_pad_ms=500,   
                 )
 
                 if not speech_timestamps:
@@ -273,7 +280,7 @@ def run_transcription_task(file_id: str, storage_key: str, auto_translate: bool 
                 session.add_all(segments)
                 
                 file_record.status = FileStatus.TRANSLATING if auto_translate else FileStatus.TRANSCRIBED
-                file_record.duration_seconds = segments[-1].end_timestamp if segments else 0.0
+                file_record.duration_seconds = len(wav) / 16000.0
         
         logger.info(f"[Task ID: {file_id}] Transcription complete.")
 
