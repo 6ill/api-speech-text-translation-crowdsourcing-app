@@ -55,8 +55,6 @@ def get_or_load_asr_pipeline():
 
     logger.info("Initializing ASR Model (Lazy Load)...")
 
-    is_gpu = torch.cuda.is_available()
-    
     base_model_id = Config.ASR_BASE_MODEL_ID
     
     logger.info(f"Fetching ASR adapter for {Config.ASR_MODEL_NAME} from MLflow...")
@@ -78,8 +76,9 @@ def get_or_load_asr_pipeline():
     )
 
     if adapter_path:
-        logger.info(f"Attaching LoRA Adapter to ASR from: {adapter_path}")
+        logger.info(f"Attaching and MERGING LoRA Adapter from: {adapter_path}")
         model = PeftModel.from_pretrained(base_model, adapter_path)
+        model = model.merge_and_unload()
     else:
         logger.warning("ASR Adapter not found. Using raw Base Model as fallback.")
         model = base_model
