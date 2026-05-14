@@ -33,7 +33,16 @@ class MTFineTuner:
             src = example['source_text']
             tgt = example['target_text']
             
-            prompt = f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{sys_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{src}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{tgt}<|eot_id|>"
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": src},
+                {"role": "assistant", "content": tgt}
+            ]
+            
+            prompt = self.tokenizer.apply_chat_template(
+                messages, 
+                tokenize=False
+            )
             
             return {"text": prompt}
 
@@ -47,8 +56,6 @@ class MTFineTuner:
         from peft import PeftModel
         from trl import SFTTrainer, SFTConfig
         
-        train_encoded = self._prepare_prompt_completion_dataset(train_dataset)
-        eval_encoded = self._prepare_prompt_completion_dataset(eval_dataset)
        
          
         base_model, self.tokenizer = FastLanguageModel.from_pretrained(
@@ -59,6 +66,8 @@ class MTFineTuner:
             token=Config.HF_TOKEN
         )
         
+        train_encoded = self._prepare_prompt_completion_dataset(train_dataset)
+        eval_encoded = self._prepare_prompt_completion_dataset(eval_dataset)
         # Continual Learning Adapter Injection
         if self.existing_adapter_path and os.path.exists(self.existing_adapter_path):
             logger.info(f"Existing adapter found at {self.existing_adapter_path}. Resuming fine-tuning...")
@@ -171,8 +180,18 @@ class MTFineTuner:
         with torch.no_grad():
             for item in dataset:
                 src, tgt = item['source_text'], item['target_text']
-                prompt = f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{sys_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{src}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
                 
+                messages = [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": src},
+                ]
+                
+                prompt = self.tokenizer.apply_chat_template(
+                    messages, 
+                    tokenize=False, 
+                    add_generation_prompt=True
+                )
+
                 inputs = self.tokenizer(prompt, return_tensors="pt").to("cuda")
                 outputs = model.generate(**inputs, max_new_tokens=100, pad_token_id=self.tokenizer.eos_token_id, temperature=0.1)
                 
