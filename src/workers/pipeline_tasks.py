@@ -205,40 +205,44 @@ def run_cl_pipeline(task_type_str: str = "asr"):
                     static_test_dataset=static_test_dataset,
                     new_adapter_path=adapter_path
                 )
+                # Prevent division by zero in case a perfect score of 0 occurs
+                safe_baseline = baseline_score if baseline_score > 0 else 1e-9
                 
                 # Log Metrics to DB and MLflow
                 if task_type == PipelineTaskType.ASR:
                     metrics_json = {"wer": new_score}
                     baseline_json = {"wer": baseline_score}
-                    improvement = baseline_score - new_score
+                    
+                    improvement_pct = ((baseline_score - new_score) / safe_baseline) * 100
+                    
                     score_name = "WER"
-                    IMPROVEMENT_THRESHOLD = 1.0 
+                    IMPROVEMENT_THRESHOLD_PCT = 5.0  
                     model_registry_name = Config.ASR_MODEL_NAME
                     
                 else:
                     metrics_json = {"bleu": new_score}
                     baseline_json = {"bleu": baseline_score}
-                    improvement = new_score - baseline_score
+                    
+                    improvement_pct = ((new_score - baseline_score) / safe_baseline) * 100
+                    
                     score_name = "BLEU"
-                    IMPROVEMENT_THRESHOLD = 0.5
+                    IMPROVEMENT_THRESHOLD_PCT = 2.5
                     model_registry_name = Config.MT_MODEL_NAME
                 
                 run_log.metrics_new_model = metrics_json
                 run_log.metrics_baseline = baseline_json
                 
+                # Log the raw scores AND the percentage improvement to MLflow
                 mlflow.log_metrics({
                     f"eval_{score_name.lower()}_baseline": baseline_score,
                     f"eval_{score_name.lower()}_new": new_score,
-                    f"{score_name.lower()}_improvement": improvement
+                    f"{score_name.lower()}_improvement_pct": improvement_pct
                 })
                 
-                if improvement >= IMPROVEMENT_THRESHOLD:
-                    logger.info(f"SUCCESS: Model improved by {improvement:.2f} {score_name}. Registering...")
+                # Evaluate against the percentage threshold
+                if improvement_pct >= IMPROVEMENT_THRESHOLD_PCT:
+                    logger.info(f"SUCCESS: Model improved by {improvement_pct:.2f}%. Registering...")
                     
-                    # Register Model to MLflow Registry
-                    # We log the ADAPTER artifacts, not the full model (efficient)
-                    # mlflow.log_artifact(adapter_path, artifact_path="model_adapter")
-
                     # Custom PyFunc Class definition
                     class AdapterWrapper(mlflow.pyfunc.PythonModel):
                         def predict(self, context, model_input):
@@ -270,13 +274,12 @@ def run_cl_pipeline(task_type_str: str = "asr"):
                     _mark_data_as_used(session, correction_ids, task_type)
                     
                     run_log.status = PipelineRunStatus.SUCCESS
-                    run_log.message = f"Model promoted. {score_name} improved: {improvement:.2f}"
+                    run_log.message = f"Model promoted. {score_name} improved by {improvement_pct:.2f}%"
                 
                 else:
-                    logger.info(f"FAILURE: Improvement {improvement:.2f} is below threshold {IMPROVEMENT_THRESHOLD}.")
-                    run_log.status = PipelineRunStatus.SUCCESS # The RUN succeeded, but model failed
-                    run_log.message = f"No promotion. Improvement {improvement:.2f} too low."
-                    
+                    logger.info(f"FAILURE: Improvement {improvement_pct:.2f}% is below threshold {IMPROVEMENT_THRESHOLD_PCT}%.")
+                    run_log.status = PipelineRunStatus.SUCCESS # The pipeline ran successfully, but model failed promotion
+                    run_log.message = f"No promotion. Improvement {improvement_pct:.2f}% too low."                    
                 session.add(run_log)
                 
         except Exception as e:
