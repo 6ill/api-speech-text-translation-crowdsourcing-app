@@ -127,8 +127,8 @@ class ASRFineTuner:
             logger.info("No previous ASR adapter found. Initializing a NEW LoRA adapter...")
             config = LoraConfig(
                 target_modules=["q_proj", "v_proj", "k_proj", "out_proj"],
-                r=16,
-                lora_alpha=32,
+                r=8,
+                lora_alpha=16,
                 lora_dropout=0.1,
                 bias="none"
             )
