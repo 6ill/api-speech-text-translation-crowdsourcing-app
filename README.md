@@ -1,7 +1,7 @@
 # Speech-to-Text & Translation App with Continual Learning
 
 ## Background
-The primary objective of this project is to build an end-to-end crowdsourcing application capable of Automatic Speech Recognition (ASR) and Machine Translation (MT). To ensure the AI models adapt to new vocabulary and domain-specific context over time without losing previously acquired knowledge, the system implements an automated **Continual Learning (CL)** pipeline. This pipeline utilizes **LoRA (Low-Rank Adaptation)** and **QLoRA (4-bit Quantization)** to fine-tune OpenAI's Whisper (ASR) and Meta's Llama 3.1 (MT) efficiently on consumer-grade hardware (e.g., RTX 4080 16GB).
+The primary objective of this project is to build an end-to-end crowdsourcing application capable of Automatic Speech Recognition (ASR) and Machine Translation (MT). To ensure the AI models adapt to new vocabulary and domain-specific context over time without losing previously acquired knowledge, the system implements an automated **Continual Learning (CL)** pipeline. This pipeline utilizes **LoRA (Low-Rank Adaptation)** and **QLoRA (4-bit Quantization)** to fine-tune OpenAI's Whisper (ASR) and Qwen3 (MT) efficiently on consumer-grade hardware (e.g., RTX 4080 16GB).
 
 ## System Architecture & Services
 
@@ -24,7 +24,7 @@ The intelligence of the system relies on a continuous feedback loop:
 2. **Triggering the Pipeline:** `celery_beat` runs periodically. If the accumulated corrections exceed a defined threshold (e.g., 50 samples), it triggers the CL pipeline.
 3. **Dataset Preparation:** The system gathers the new corrections and mixes them with a **20% replay ratio** of historical data. This acts as a safeguard against catastrophic forgetting.
 4. **Adapter Fine-Tuning:**
-    * **Cold Start:** If no previous adapter exists, the system initializes a fresh LoRA adapter on the base model (Whisper or Llama).
+    * **Cold Start:** If no previous adapter exists, the system initializes a fresh LoRA adapter on the base model (Whisper or Qwen).
     * **Continual Learning:** If a previous adapter exists in MLflow, it is downloaded and "unlocked" (`is_trainable=True`) to resume training on the new data batch.
 5. **Comparative Evaluation:** The newly trained adapter is evaluated against a static test dataset. Its score (WER for ASR, BLEU for MT) is compared against the current production baseline.
 6. **Promotion & Deployment:** If the new model surpasses the improvement threshold, it is registered in MLflow and tagged as `staging`.
@@ -49,7 +49,7 @@ MLFLOW_S3_ENDPOINT_URL="http://object-storage:9000"
 # External URL (For frontend Presigned URLs)
 STORAGE_EXTERNAL_URL="http://localhost:9100"
 
-# Hugging Face Token (Required for Llama 3.1)
+# Hugging Face Token (Required for accessing model from huggingface repo)
 HF_TOKEN="your_hf_token_here"
 ```
 
