@@ -1,3 +1,6 @@
+import io
+
+from docx import Document
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID
@@ -141,3 +144,44 @@ class InferenceService:
         full_text = " ".join(text_parts)
         
         return full_text
+
+    @staticmethod
+    async def export_docx(
+        session: AsyncSession,
+        user: User,
+        file_id: UUID,
+        export_type: str # "transcription" or "translation"
+    ) -> tuple[bytes, str]:
+        """
+        Return: (document_bytes, filename)
+        """
+        # Fetch file to get the filename for the download attachment
+        file_record = await session.get(File, file_id)
+        if not file_record or (file_record.user_id != user.id and user.role != Role.ADMIN):
+            raise FileNotFound()
+            
+        is_translation = (export_type == "translation")
+        
+        full_text = await InferenceService.get_full_text(
+            session=session, 
+            user=user, 
+            file_id=file_id, 
+            task_type=export_type
+        )
+
+        doc = Document()
+        title = "Translation Document" if is_translation else "Transcription Document"
+        doc.add_heading(title, level=1)
+        doc.add_paragraph(full_text)
+
+        file_stream = io.BytesIO()
+        doc.save(file_stream)
+        
+        # Reset the stream position to the beginning so it can be read by FastAPI
+        file_stream.seek(0)
+        
+        safe_title = "".join([c if c.isalnum() else "_" for c in file_record.file_name])
+        lang_code = "en" if is_translation else "id"
+        filename = f"{safe_title}_{lang_code}.docx"
+
+        return file_stream.getvalue(), filename
