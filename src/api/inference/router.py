@@ -124,3 +124,34 @@ async def get_inference_full_text(
             "full_text": full_text
         }
     }
+
+@router.get("/{file_id}/export-docx", status_code=status.HTTP_200_OK)
+async def export_docx_file(
+    file_id: UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    export_type: ExportType = Query(description="Select output task: transcription or translation")
+):
+    """
+    Download the full text as a Microsoft Word (.docx) file.
+    Browser will automatically download this response.
+    """
+    content_bytes, filename = await InferenceService.export_docx(
+        session=session,
+        user=user,
+        file_id=file_id,
+        export_type=export_type.value
+    )
+
+    encoded_filename = urllib.parse.quote(filename)
+
+    # Standard MIME type for .docx files
+    docx_media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+    return Response(
+        content=content_bytes,
+        media_type=docx_media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        }
+    )

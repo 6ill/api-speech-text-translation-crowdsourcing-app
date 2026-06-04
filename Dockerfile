@@ -28,7 +28,7 @@ RUN sed -i '/^torch/d' requirements.txt && \
 RUN pip install --no-deps "unsloth @ git+https://github.com/unslothai/unsloth.git" \
     git+https://github.com/unslothai/unsloth_zoo.git
 
-RUN pip install -r requirements.txt
+RUN pip install --default-timeout=1000 -r requirements.txt
 
 RUN pip install --default-timeout=1000 transformers==4.56.2 \
     peft \
