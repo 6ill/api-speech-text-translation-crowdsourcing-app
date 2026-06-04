@@ -1,7 +1,7 @@
 # Speech-to-Text & Translation App with Continual Learning
 
 ## Background
-The primary objective of this project is to build an end-to-end crowdsourcing application capable of Automatic Speech Recognition (ASR) and Machine Translation (MT). To ensure the AI models adapt to new vocabulary and domain-specific context over time without losing previously acquired knowledge, the system implements an automated **Continual Learning (CL)** pipeline. This pipeline utilizes **LoRA (Low-Rank Adaptation)** and **QLoRA (4-bit Quantization)** to fine-tune OpenAI's Whisper (ASR) and Qwen3 (MT) efficiently on consumer-grade hardware (e.g., RTX 4080 16GB).
+The primary objective of this project is to build an end-to-end crowdsourcing application capable of Automatic Speech Recognition (ASR) and Machine Translation (MT). To ensure the AI models adapt to new vocabulary and domain-specific context over time without losing previously acquired knowledge, the system implements an automated **Continual Learning (CL)** pipeline. This pipeline utilizes **LoRA (Low-Rank Adaptation)** and **QLoRA (4-bit Quantization)** to fine-tune OpenAI's Whisper (ASR) and Qwen2.5 (MT) efficiently on consumer-grade hardware (e.g., RTX 4080 16GB).
 
 ## System Architecture & Services
 
